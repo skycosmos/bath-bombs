@@ -1,0 +1,12 @@
+output/
+!output/**/.gitkeep
+data/gold/*
+!data/gold/gold_labels.csv
+!data/gold/.gitkeep
+__pycache__/
+*.pyc
+.DS_Store
+.venv/
+venv/
+.env
+*.egg-info/

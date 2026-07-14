@@ -1,0 +1,67 @@
+# Pipeline configuration — pin versions for reproducibility.
+
+paths:
+  csv: input/product_page_info_bath_bombs_all.csv
+  html_dir: /Users/tzheng/Library/CloudStorage/Dropbox-HarvardUniversity/Tianyu Zheng/ASIN_number_of_units/amazon_web_scraping/asin_level/html/bath_bombs_all/bath_bombs_all
+  html_cache_dir: output/cache/html_extract
+  llm_cache_dir: output/cache/llm
+  llm_log: output/logs/llm_calls.jsonl
+  output_csv: output/product_counts.csv
+  hard_cases_csv: output/hard_cases.csv
+  needs_llm_csv: output/needs_llm.csv
+  labeling_sample_csv: output/labeling_sample.csv
+  gold_csv: data/gold/gold_labels.csv
+
+columns_to_keep:
+  - asin
+  - asin_in_html
+  - title
+  - brand
+  - manufacturer
+  - price
+  - per_unit_price_text
+  - unit_text
+  - per_unit_price
+  - unit_num
+  - label_unit
+  - label_unit_num
+  - number_of_items
+  - item_weight
+  - size
+  - badge_label
+  - image_num
+  - variation_quantity
+  - product_dimensions
+  - feature
+  - product_description
+
+scope:
+  include_shower_bombs: true
+  include_bath_melts: false
+  include_fizz_tablets: false
+
+# Purity rules. strict=true (default): kit/not-bomb/positive matched on TITLE primarily,
+# reducing false excludes from brand/feature wording.
+purity:
+  strict: true
+
+html:
+  max_bullets: 12
+  max_description_chars: 1200
+
+# LLM is OFF by default. Run a full rules+HTML parse first, then:
+#   python scripts/run_pipeline.py --enable-llm
+# which only scores rows with needs_llm=True.
+llm:
+  enabled: false
+  prompt_version: count_v1
+  prompt_path: prompts/count_v1.md
+  model: gpt-4.1-mini
+  temperature: 0
+  seed: 0
+  max_tokens: 400
+  only_needs_llm: true
+
+labeling:
+  sample_size: 300
+  seed: 42

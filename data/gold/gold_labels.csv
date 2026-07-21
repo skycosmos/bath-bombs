@@ -1,1 +1,51 @@
-asin,stratum,is_pure_bath_bomb_gold,n_bomb_balls_gold,exclude_reason_gold,notes,annotator
+asin,stratum,split,is_pure_bath_bomb_gold,n_bomb_balls_gold,exclude_reason_gold,annotator,n_annotations,notes
+B01M14I5PF,single,train,true,8,,Tianyu,1,
+B01MUD0S6F,kit,eval,true,10,,Tianyu,1,accepted model prediction
+B071SFR1NT,kit,train,true,12,,Tianyu,1,accepted model prediction
+B072K4533P,kit,train,true,16,,Tianyu,1,2 Pack * 8 for each
+B07DDM2GV5,needs_llm,train,,,,Tianyu,1,accepted model prediction
+B07DQFJ9TS,kit,eval,false,,kit,Tianyu,1,accepted model prediction
+B07JC8XKTQ,single,train,true,1,,Tianyu,1,accepted model prediction
+B07N998K4S,needs_llm,train,false,,not_bath_bomb,Tianyu,1,
+B07NZMYFHB,needs_llm,train,,,,Tianyu,1,accepted model prediction
+B07YKF42Y5,needs_llm,train,,,,Tianyu,1,accepted model prediction
+B084JSSHXM,single,train,true,1,,Tianyu,1,accepted model prediction
+B084TRP1PD,needs_llm,train,true,1,,Tianyu,1,
+B087F9XRLL,needs_llm,train,,,,Tianyu,1,accepted model prediction
+B08F3Z636C,single,train,true,1,,Tianyu,1,accepted model prediction
+B08FBQLHQT,kit,train,false,,kit,Tianyu,1,accepted model prediction
+B08J9H7N9G,single,train,true,1,,Tianyu,1,accepted model prediction
+B08JSH55JL,single,train,true,6,,Tianyu,1,detect from pictures
+B08NWVBSY2,needs_llm,train,,,,Tianyu,1,accepted model prediction
+B08SJLDKQR,kit,train,false,,kit,Tianyu,1,accepted model prediction
+B08V964BW6,needs_llm,eval,,,,Tianyu,1,accepted model prediction
+B091FTJJBS,kit,train,true,20,,Tianyu,1,accepted model prediction
+B0921HQDSG,kit,train,false,,kit,Tianyu,1,accepted model prediction
+B09289QV57,kit,train,false,,kit,Tianyu,1,accepted model prediction
+B092MXCR7D,needs_llm,eval,,,,Tianyu,1,accepted model prediction
+B093177Y3N,single,train,true,1,,Tianyu,1,accepted model prediction
+B09JFZ3QL3,needs_llm,train,,,,Tianyu,1,accepted model prediction
+B09JLZ59YG,needs_llm,eval,,,,Tianyu,1,accepted model prediction
+B09LC5HMVX,kit,train,false,,kit,Tianyu,1,accepted model prediction
+B09MT8SQL7,kit,train,true,9,,Tianyu,1,
+B09NGLMNQ5,needs_llm,eval,false,,not_bath_bomb,Tianyu,1,
+B09VZW3FC9,kit,train,false,,not_bath_bomb,Tianyu,1,accepted model prediction
+B09YY75H22,kit,train,false,,kit,Tianyu,1,accepted model prediction
+B0BDQCWWDF,single,train,true,1,,Tianyu,1,accepted model prediction
+B0BLHSG7SM,single,train,false,,not_bath_bomb,Tianyu,1,
+B0BVL9JXTF,needs_llm,train,true,6,,Tianyu,1,
+B0C77L73NZ,kit,train,true,6,,Tianyu,1,accepted model prediction
+B0C8VF7TLM,needs_llm,train,,,,Tianyu,1,accepted model prediction
+B0C9SP669D,needs_llm,train,,,,Tianyu,1,accepted model prediction
+B0CBPHBBYS,single,train,true,1,,Tianyu,1,
+B0CC8DTTXT,needs_llm,train,,,,Tianyu,1,accepted model prediction
+B0CC8PMFYR,needs_llm,train,,,,Tianyu,1,accepted model prediction
+B0CJ7KYDPW,needs_llm,train,false,,not_bath_bomb,Tianyu,1,
+B0CMJT2LXQ,kit,train,false,,kit,Tianyu,1,accepted model prediction
+B0CNX5SJ17,kit,train,true,16,,Tianyu,1,
+B0CNZ3L6D3,kit,train,true,6,,Tianyu,1,
+B0D35KHHVP,kit,train,true,12,,Tianyu,1,
+B0D3QLLWR7,single,train,true,1,,Tianyu,1,accepted model prediction
+B0D6KQ59Y8,single,train,false,,not_bath_bomb,Tianyu,1,detect from pictures
+B0DCQ6LVGF,single,train,true,1,,Tianyu,1,accepted model prediction
+B0FD3WZS21,kit,train,true,6,,Tianyu,1,accepted model prediction

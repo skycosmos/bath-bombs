@@ -36,36 +36,44 @@ eval split.
 ## Counting SOP (annotated with live volumes)
 
 The decision procedure, with each rule's share of the current **25,357-listing**
-run. Purity branches are % of all listings; count branches are % of the **16,025
+run. Purity branches are % of all listings; count branches are % of the **11,894
 pure** products. First matching rule wins at every stage.
 
 ### Stage 1 — Purity: is this a countable bath bomb? (`purity.py`)
 
-Judged from the **title** in strict mode. Kit and mixed-set exclude regardless of
-wording; a bomb phrase ("bath bomb/fizzy/ball/blaster", "shower bomb") **rescues**
-a title from the not-bomb/tablet/melt checks.
+Judged from the **title** in strict mode. A six-rung ladder of mutually-exclusive
+detectors; first match wins.
 
 ```mermaid
 flowchart TD
-  T["Title (strict mode)"] --> K{"KIT terms?<br/>kit, DIY, mould, baking soda, citric acid"}
-  K -->|"yes · 556 (2.2%)"| EK["EXCLUDE: kit"]
-  K -->|no| MX{"Companion / gift set?<br/>soap, candle, lotion, shampoo, gift set"}
-  MX -->|"yes · 974 (3.8%)"| EM["EXCLUDE: mixed_set"]
-  MX -->|no| NB{"not-bomb / tablet / melt?<br/>salts, powder, diffuser, tablet, melt<br/>AND no bomb phrase in title"}
-  NB -->|"yes · 502 (2.0%)"| ENB["EXCLUDE: not_bath_bomb"]
-  NB -->|no| P{"Bomb phrase in title?"}
-  P -->|"yes · 16,025 (63.2%)"| PURE["PURE — count it"]
-  P -->|"no · 7,300 (28.8%)"| U["UNCLEAR — provisional count, flag for review"]
+  T["Title (strict mode)"] --> K{"CRAFT_KIT?<br/>kit, DIY, mould, baking soda, citric acid"}
+  K -->|"yes · 556 (2.2%)"| EK["EXCLUDE: craft_kit"]
+  K -->|no| B{"BUNDLE?<br/>bomb phrase AND (soap/candle/lotion/toy/<br/>necklace/ring, or surprise+inside)"}
+  B -->|"yes · 3,439 (13.6%)"| EB["EXCLUDE: bundle"]
+  B -->|no| SUB{"SUBSTITUTE first?<br/>shower steamer/melt/tablet/salt/powder/<br/>beads — wins if it precedes any bomb word"}
+  SUB -->|"yes · 2,424 (9.6%)"| ESU["EXCLUDE: substitute"]
+  SUB -->|no| TL{"TOILETRY?<br/>soap/shampoo/lotion/candle/body wash/…<br/>(only reachable with no bomb phrase)"}
+  TL -->|"yes · 272 (1.1%)"| ETL["EXCLUDE: toiletry"]
+  TL -->|no| P{"Bomb phrase present?"}
+  P -->|"yes · 11,894 (46.9%)"| PURE["PURE — count it"]
+  P -->|"no · 6,772 (26.7%)"| U["UNCLASSIFIED — flag for review"]
 ```
 
-| Rule (`purity_source`) | Fired | Share |
-|---|---|---|
-| `rule_positive` → PURE | 16,025 | 63.2% |
-| `rule_unclear` → UNCLEAR | 7,300 | 28.8% |
-| `rule_kit` | 556 | 2.2% |
-| `rule_mixed` + `_gift_bullets` + `_weak` | 974 | 3.8% |
-| `rule_not_bomb` + `rule_tablet` + `rule_melt` | 502 | 2.0% |
-| `rule_shower` (disabled — shower bombs count) | 0 | — |
+| Rule (`purity_source`) | `exclude_reason` | Fired | Share |
+|---|---|---|---|
+| `rule_positive` → PURE | — | 11,894 | 46.9% |
+| `rule_unclassified` | `unclassified` | 6,772 | 26.7% |
+| `rule_bundle` | `bundle` | 3,439 | 13.6% |
+| `rule_substitute` | `substitute` | 2,424 | 9.6% |
+| `rule_craft_kit` | `craft_kit` | 556 | 2.2% |
+| `rule_toiletry` | `toiletry` | 272 | 1.1% |
+
+**Gating modes:** CRAFT_KIT and TOILETRY exclude on any match; BUNDLE requires a
+bomb phrase **and** a non-bomb item to co-occur (a bath bomb sold *with* something
+else); SUBSTITUTE uses **first-word adjudication** — a shower-steamer/salt/tablet
+term excludes only if it appears *before* any bomb phrase in the title
+("Bath Bomb & Shower Steamer" stays PURE; "Shower Steamer, Bath Bomb Sampler" is
+excluded). Substitute sub-families are gated by `scope.include_*` flags.
 
 ### Stage 2 — Detect candidate numbers (`counts.py`)
 
@@ -167,11 +175,16 @@ Counting pipeline over **25,357 listings** (rules + HTML + Keepa):
 
 | Metric | Value |
 |--------|-------|
-| Pure bath bombs (count assigned) | **16,025** (63%) |
-| Excluded | 2,032 — mixed_set 974 · kit 556 · not_bath_bomb 502 |
-| Unclear (purity undecided) | 7,300 |
+| Pure bath bombs (count assigned) | **11,894** (46.9%) |
+| Excluded | 6,691 — bundle 3,439 · substitute 2,424 · craft_kit 556 · toiletry 272 |
+| Unclassified (purity undecided) | 6,772 |
 | Unable to count (`count_unable`) | ~3,858 |
-| Confidence: high / medium / low | 5,457 · 2,190 · 15,678 |
+
+> Purity was retightened: the reorganized ladder now excludes shower steamers,
+> bath salts/tablets/melts (SUBSTITUTE), and bath-bomb-plus-item sets (BUNDLE) that
+> the earlier rules counted — moving ~4,200 listings from PURE to excluded. The
+> 50-label gold slice predates this change; re-label before trusting the metrics
+> below.
 
 Model evaluation vs **50 human labels** (`eval_gold.py --report`):
 

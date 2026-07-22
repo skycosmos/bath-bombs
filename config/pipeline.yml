@@ -36,6 +36,7 @@ columns_to_keep:
 
 scope:
   include_shower_bombs: true
+  include_shower_steamers: false
   include_bath_melts: false
   include_fizz_tablets: false
 

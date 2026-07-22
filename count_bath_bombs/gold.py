@@ -18,11 +18,10 @@ GOLD_COLUMNS = [
 
 
 def _stratum_for_row(row: pd.Series) -> str:
-    title = str(row.get("title") or "").lower()
-    if row.get("purity_source") == "rule_kit" or "kit" in title:
-        return "kit"
-    if row.get("exclude_reason") == "mixed_set":
-        return "mixed_set"
+    # Exclusion reasons map straight to strata (craft_kit / bundle / substitute / toiletry).
+    reason = row.get("exclude_reason")
+    if row.get("is_pure_bath_bomb") is False and isinstance(reason, str) and reason:
+        return reason
     noi = row.get("number_of_items")
     title_n = row.get("cand_title")
     if (noi == 1 or noi == 1.0) and title_n is not None and title_n > 1:
@@ -78,6 +77,8 @@ def build_labeling_sample(
             "count_source",
             "exclude_reason",
             "seller_counts_pack_as_one",
+            "keepa_main_image_url",
+            "keepa_image_count",
         ]
     ].copy()
     out["is_pure_bath_bomb_gold"] = ""

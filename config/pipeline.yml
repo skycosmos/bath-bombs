@@ -2,13 +2,11 @@
 
 paths:
   csv: input/product_page_info_bath_bombs_all.csv
+  # Second source: Keepa product-data export (one row per ASIN, joined on asin).
+  keepa_csv: /Users/tianyu/Library/CloudStorage/Dropbox-Personal/ASIN_number_of_units/keepa_data/bath_bombs_all/product/static/product_data_bath_bombs_all_2025-07-15-03-00-02.csv
   html_dir: /Users/tzheng/Library/CloudStorage/Dropbox-HarvardUniversity/Tianyu Zheng/ASIN_number_of_units/amazon_web_scraping/asin_level/html/bath_bombs_all/bath_bombs_all
   html_cache_dir: output/cache/html_extract
-  llm_cache_dir: output/cache/llm
-  llm_log: output/logs/llm_calls.jsonl
   output_csv: output/product_counts.csv
-  hard_cases_csv: output/hard_cases.csv
-  needs_llm_csv: output/needs_llm.csv
   labeling_sample_csv: output/labeling_sample.csv
   gold_csv: data/gold/gold_labels.csv
   annotations_csv: data/gold/annotations.csv
@@ -50,18 +48,12 @@ html:
   max_bullets: 12
   max_description_chars: 1200
 
-# LLM is OFF by default. Run a full rules+HTML parse first, then:
-#   python scripts/run_pipeline.py --enable-llm
-# which only scores rows with needs_llm=True.
-llm:
-  enabled: false
-  prompt_version: count_v1
-  prompt_path: prompts/count_v1.md
-  model: gpt-4.1-mini
-  temperature: 0
-  seed: 0
-  max_tokens: 400
-  only_needs_llm: true
+# Keepa second source. When enabled, keepa_* fields are joined on asin and used
+# as a fallback / second signal for counts, resolver and purity.
+# Degrades gracefully to null columns if the source file is not available.
+keepa:
+  enabled: true
+  image_url_prefix: "https://m.media-amazon.com/images/I/"
 
 labeling:
   sample_size: 300

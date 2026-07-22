@@ -29,30 +29,13 @@ def main() -> None:
         action="store_true",
         help="Also write a stratified manual-labeling sample CSV",
     )
-    p.add_argument(
-        "--enable-llm",
-        action="store_true",
-        help="Override config to enable LLM on hard cases (needs OPENAI_API_KEY)",
-    )
-    p.add_argument(
-        "--disable-llm",
-        action="store_true",
-        help="Override config to disable LLM",
-    )
     args = p.parse_args()
-
-    enable_llm = None
-    if args.enable_llm:
-        enable_llm = True
-    if args.disable_llm:
-        enable_llm = False
 
     run_pipeline(
         args.config,
         skip_html=args.skip_html,
         html_limit=args.html_limit,
         write_labeling_sample=args.labeling_sample,
-        enable_llm=enable_llm,
     )
 
 

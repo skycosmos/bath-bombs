@@ -317,7 +317,6 @@ def seed_candidates(
     eval_frac: float = 0.2,
     confidences: Iterable[str] = ("high",),
     only_train: bool = True,
-    exclude_needs_llm: bool = True,
 ) -> list[dict]:
     """Model-prediction annotations for confident rows (train split by default)."""
     conf_set = {str(c).lower() for c in confidences}
@@ -326,8 +325,6 @@ def seed_candidates(
         asin = str(r.get("asin"))
         split = assign_split(asin, eval_frac)
         if only_train and split != "train":
-            continue
-        if exclude_needs_llm and bool(r.get("needs_llm")):
             continue
         if str(r.get("count_confidence")).lower() not in conf_set:
             continue

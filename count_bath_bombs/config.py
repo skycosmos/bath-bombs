@@ -22,9 +22,4 @@ def load_config(path: str | Path | None = None) -> dict[str, Any]:
         p = Path(value)
         if not p.is_absolute():
             paths[key] = str((REPO_ROOT / p).resolve())
-    prompt = cfg.get("llm", {}).get("prompt_path")
-    if prompt:
-        p = Path(prompt)
-        if not p.is_absolute():
-            cfg["llm"]["prompt_path"] = str((REPO_ROOT / p).resolve())
     return cfg

@@ -4,7 +4,5 @@ beautifulsoup4>=4.12
 lxml>=4.9
 pyyaml>=6.0
 tqdm>=4.65
-openai>=1.40
-python-dotenv>=1.0
 streamlit>=1.32
 

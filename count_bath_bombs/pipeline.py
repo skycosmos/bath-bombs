@@ -5,13 +5,12 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
-from dotenv import load_dotenv
 
-from count_bath_bombs.config import REPO_ROOT, load_config
+from count_bath_bombs.config import load_config
 from count_bath_bombs.counts import apply_candidates
 from count_bath_bombs.gold import build_labeling_sample, evaluate_against_gold
 from count_bath_bombs.html_extract import attach_html_extracts
-from count_bath_bombs.llm import apply_llm_hard_cases
+from count_bath_bombs.keepa import IMAGE_URL_PREFIX, KEEPA_FIELDS, attach_keepa
 from count_bath_bombs.purity import apply_purity
 from count_bath_bombs.resolve import apply_resolver
 
@@ -26,32 +25,15 @@ def load_products(cfg: dict[str, Any]) -> pd.DataFrame:
     return df[cols].copy()
 
 
-def _make_openai_client():
-    load_dotenv(REPO_ROOT / ".env")
-    try:
-        from openai import OpenAI
-
-        return OpenAI()
-    except Exception:
-        return None
-
-
 def run_pipeline(
     config_path: str | Path | None = None,
     *,
     skip_html: bool = False,
     html_limit: int | None = None,
     write_labeling_sample: bool = False,
-    enable_llm: bool | None = None,
 ) -> pd.DataFrame:
-    """
-    Default: rules + HTML only (LLM off).
-    After a full parse, re-run with enable_llm=True to improve needs_llm rows.
-    """
-    load_dotenv(REPO_ROOT / ".env")
+    """Rules + HTML + Keepa. Assigns a count unless the rules are unable to."""
     cfg = load_config(config_path)
-    if enable_llm is not None:
-        cfg["llm"]["enabled"] = enable_llm
 
     df = load_products(cfg)
 
@@ -77,24 +59,25 @@ def run_pipeline(
             if col not in df.columns:
                 df[col] = None
 
+    keepa_cfg = cfg.get("keepa", {})
+    if keepa_cfg.get("enabled", False):
+        df = attach_keepa(
+            df,
+            cfg["paths"].get("keepa_csv"),
+            image_url_prefix=keepa_cfg.get("image_url_prefix", IMAGE_URL_PREFIX),
+        )
+    else:
+        for col in KEEPA_FIELDS:
+            if col not in df.columns:
+                df[col] = None
+
     df = apply_purity(df, cfg.get("scope", {}), cfg.get("purity", {}))
     df = apply_candidates(df)
     df = apply_resolver(df)
 
-    client = _make_openai_client() if cfg["llm"].get("enabled") else None
-    df = apply_llm_hard_cases(df, cfg, client=client)
-
     out_path = Path(cfg["paths"]["output_csv"])
     out_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(out_path, index=False)
-
-    hard = df[df["is_hard_case"].fillna(False)]
-    hard_path = Path(cfg["paths"]["hard_cases_csv"])
-    hard.to_csv(hard_path, index=False)
-
-    needs = df[df["needs_llm"].fillna(False)]
-    needs_path = Path(cfg["paths"].get("needs_llm_csv", out_path.parent / "needs_llm.csv"))
-    needs.to_csv(needs_path, index=False)
 
     if write_labeling_sample:
         sample = build_labeling_sample(
@@ -116,11 +99,8 @@ def run_pipeline(
             print("Gold metrics:", metrics)
 
     print(f"Wrote {len(df):,} rows → {out_path}")
-    print(f"needs_llm={len(needs):,} → {needs_path}")
-    print(f"Hard cases: {len(hard):,} → {hard_path}")
     print(
         "Purity counts:",
         df["is_pure_bath_bomb"].value_counts(dropna=False).to_dict(),
     )
-    print("LLM enabled:", bool(cfg["llm"].get("enabled")))
     return df

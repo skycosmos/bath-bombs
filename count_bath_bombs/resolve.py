@@ -22,6 +22,8 @@ def _cand_count_guess(row: pd.Series) -> tuple[int | None, str | None, str]:
     html_noi = row.get("cand_html_number_of_items")
     html_unit = row.get("cand_html_unit_count")
     html_pkg = row.get("cand_html_package_qty")
+    keepa_noi = row.get("cand_keepa_number_of_items")
+    keepa_pkg = row.get("cand_keepa_package_qty")
     label_n = row.get("cand_label_unit_num")
 
     text_multi = _first_multi(title_n, bullets_n, size_n, desc_n)
@@ -41,12 +43,18 @@ def _cand_count_guess(row: pd.Series) -> tuple[int | None, str | None, str]:
     if noi is not None and noi > 1:
         return int(noi), "number_of_items", "medium"
 
+    # Keepa numberOfItems agrees ~99.8% with the scrape where both exist and
+    # covers ~10k rows the scrape leaves blank — strong second catalog signal.
+    keepa_multi = _first_multi(keepa_noi, keepa_pkg)
+    if keepa_multi is not None:
+        return keepa_multi, "keepa_number_of_items", "medium"
+
     html_multi = _first_multi(html_noi, html_unit, html_pkg, label_n)
     if html_multi is not None:
         return html_multi, "html_details", "medium"
 
     text_one = title_n == 1 or bullets_n == 1 or size_n == 1
-    if noi == 1 or html_noi == 1 or html_unit == 1 or text_one or label_n == 1:
+    if noi == 1 or html_noi == 1 or html_unit == 1 or text_one or label_n == 1 or keepa_noi == 1:
         conf = "medium" if (noi == 1 or text_one) else "low"
         return 1, "single_default", conf
 
@@ -55,16 +63,15 @@ def _cand_count_guess(row: pd.Series) -> tuple[int | None, str | None, str]:
 
 
 def resolve_row(row: pd.Series) -> dict[str, Any]:
-    """
-    Always assign n_bomb_balls when a number can be justified.
-    Mark needs_llm=True for unsure / undecided cases for a later --enable-llm pass.
-    """
+    """Assign n_bomb_balls whenever a number can be justified (rules only)."""
     is_pure = row.get("is_pure_bath_bomb")
     title_n = row.get("cand_title")
     noi = row.get("cand_number_of_items")
     html_noi = row.get("cand_html_number_of_items")
     html_unit = row.get("cand_html_unit_count")
     html_pkg = row.get("cand_html_package_qty")
+    keepa_noi = row.get("cand_keepa_number_of_items")
+    keepa_pkg = row.get("cand_keepa_package_qty")
     unit_num = row.get("cand_unit_num")
 
     text_multi = _first_multi(
@@ -73,7 +80,9 @@ def resolve_row(row: pd.Series) -> dict[str, Any]:
         row.get("cand_size"),
         row.get("cand_description"),
     )
-    catalog_ones = [v for v in (noi, html_noi, html_unit, html_pkg, unit_num) if v == 1]
+    catalog_ones = [
+        v for v in (noi, html_noi, html_unit, html_pkg, keepa_noi, keepa_pkg, unit_num) if v == 1
+    ]
     seller_pack_as_one = bool(text_multi and catalog_ones)
 
     # Excluded products: no unit count
@@ -83,22 +92,12 @@ def resolve_row(row: pd.Series) -> dict[str, Any]:
             "count_confidence": "n/a",
             "count_source": None,
             "seller_counts_pack_as_one": seller_pack_as_one,
-            "is_hard_case": False,
-            "needs_llm": bool(row.get("needs_review")),
             "count_unable": False,
         }
 
     n, source, conf = _cand_count_guess(row)
 
-    # Conflicting catalog signals (e.g. title 12 vs number_of_items 6)
-    catalog_multis = [v for v in (noi, html_noi, html_unit, html_pkg) if v is not None and v > 1]
-    conflict = bool(
-        text_multi
-        and catalog_multis
-        and any(int(v) != int(text_multi) for v in catalog_multis)
-    )
-
-    # Undecided purity → always queue for later LLM; keep provisional count if evidence exists.
+    # Undecided purity → keep a provisional count if evidence exists.
     if is_pure is None or (isinstance(is_pure, float) and pd.isna(is_pure)):
         if source == "assumed_single":
             return {
@@ -106,8 +105,6 @@ def resolve_row(row: pd.Series) -> dict[str, Any]:
                 "count_confidence": "low",
                 "count_source": None,
                 "seller_counts_pack_as_one": seller_pack_as_one,
-                "is_hard_case": True,
-                "needs_llm": True,
                 "count_unable": True,
             }
         return {
@@ -115,21 +112,15 @@ def resolve_row(row: pd.Series) -> dict[str, Any]:
             "count_confidence": "low",
             "count_source": f"provisional:{source}",
             "seller_counts_pack_as_one": seller_pack_as_one,
-            "is_hard_case": True,
-            "needs_llm": True,
             "count_unable": n is None,
         }
 
-    # Pure product — always keep a number when possible.
-    # Queue LLM only for genuine uncertainty (conflicts / unable), not routine assumed singles.
-    needs_llm = bool(conflict or n is None)
+    # Pure product — keep a number when possible.
     return {
         "n_bomb_balls": int(n) if n is not None else None,
         "count_confidence": conf,
         "count_source": source,
         "seller_counts_pack_as_one": seller_pack_as_one,
-        "is_hard_case": needs_llm,
-        "needs_llm": needs_llm,
         "count_unable": n is None,
     }
 

@@ -53,16 +53,14 @@ def _read(path: Path) -> pd.DataFrame | None:
 def _load_queue(cfg: dict) -> tuple[pd.DataFrame, str]:
     sample_path = Path(cfg["paths"]["labeling_sample_csv"])
     pred_path = Path(cfg["paths"]["output_csv"])
-    needs_path = Path(cfg["paths"].get("needs_llm_csv", ROOT / "output" / "needs_llm.csv"))
 
     source = st.sidebar.selectbox(
         "Queue source",
-        ["labeling_sample", "needs_llm", "product_counts"],
-        help="labeling_sample = stratified review sheet · needs_llm = unsure/undecided rows",
+        ["labeling_sample", "product_counts"],
+        help="labeling_sample = stratified review sheet · product_counts = full predictions",
     )
     path = {
         "labeling_sample": sample_path,
-        "needs_llm": needs_path,
         "product_counts": pred_path,
     }[source]
     queue = _read(path)
@@ -320,8 +318,6 @@ def _evidence_panel(row: pd.Series) -> None:
         tags.append(f"exclude=`{row.get('exclude_reason')}`")
     if bool(_clean(row.get("seller_counts_pack_as_one"))):
         tags.append("⚠️ seller lists multi-pack as 1 item")
-    if bool(_clean(row.get("needs_llm"))):
-        tags.append("needs_llm")
     if tags:
         st.caption(" · ".join(tags))
 
@@ -336,6 +332,8 @@ def _evidence_panel(row: pd.Series) -> None:
         ("html_number_of_items", "cand_html_number_of_items", None),
         ("html_unit_count", "cand_html_unit_count", None),
         ("html_package_qty", "cand_html_package_qty", None),
+        ("keepa_number_of_items", "cand_keepa_number_of_items", None),
+        ("keepa_package_qty", "cand_keepa_package_qty", None),
         ("unit_num", "cand_unit_num", None),
         ("label_unit_num", "cand_label_unit_num", None),
     ]
@@ -357,6 +355,8 @@ def _catalog_panel(row: pd.Series) -> None:
         "brand", "manufacturer", "price", "per_unit_price_text",
         "unit_text", "number_of_items", "size", "item_weight",
         "product_dimensions", "variation_quantity", "badge_label", "image_num",
+        "keepa_number_of_items", "keepa_package_quantity", "keepa_item_weight_g",
+        "keepa_image_count", "keepa_variation_count",
     ]
     data = {f: _clean(row.get(f)) for f in fields if _clean(row.get(f)) is not None}
     if data:
@@ -400,10 +400,10 @@ def _apply_filters(
         "Split", ["eval", "train"], default=[],
         help="eval = held-out clean slice (never model-seeded)",
     )
-    only_needs_llm = st.sidebar.checkbox(
-        "Only needs_llm rows",
-        value=(source == "needs_llm"),
-        disabled=(source == "needs_llm"),
+    only_unable = st.sidebar.checkbox(
+        "Only count_unable rows",
+        value=False,
+        help="Rows the rules could not assign a count to",
     )
     strata = sorted(queue["stratum"].dropna().unique().tolist()) if "stratum" in queue else []
     pick_strata = st.sidebar.multiselect("Stratum", strata, default=[]) if strata else []
@@ -429,8 +429,8 @@ def _apply_filters(
         ]
     if pick_split:
         work = work[work["split"].isin(pick_split)]
-    if only_needs_llm and "needs_llm" in work.columns:
-        work = work[work["needs_llm"].fillna(False)]
+    if only_unable and "count_unable" in work.columns:
+        work = work[work["count_unable"].fillna(False)]
     if pick_strata:
         work = work[work["stratum"].isin(pick_strata)]
     if pick_conf:
@@ -496,8 +496,9 @@ def _review_tab(
         )
         thumb, head = st.columns([1, 4])
         with thumb:
-            if media["image"]:
-                st.image(media["image"], use_container_width=True)
+            image_url = media["image"] or _clean(row.get("keepa_main_image_url"))
+            if image_url:
+                st.image(image_url, use_container_width=True)
         with head:
             title = _clean(row.get("title")) or "(no title)"
             st.markdown(f"### {_highlight_count(title, row)}")

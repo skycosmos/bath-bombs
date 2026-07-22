@@ -29,8 +29,6 @@ def _stratum_for_row(row: pd.Series) -> str:
         return "pack_as_one"
     if title_n is not None and title_n > 1:
         return "multi_pack"
-    if row.get("needs_llm") or row.get("is_hard_case"):
-        return "needs_llm"
     if row.get("n_bomb_balls") == 1:
         return "single"
     extreme = row.get("number_of_items")
@@ -80,7 +78,6 @@ def build_labeling_sample(
             "count_source",
             "exclude_reason",
             "seller_counts_pack_as_one",
-            "is_hard_case",
         ]
     ].copy()
     out["is_pure_bath_bomb_gold"] = ""

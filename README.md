@@ -2,7 +2,7 @@
 
 Onboarding task: for each Amazon listing, decide whether it is a **pure finished
 bath-bomb product** and, if so, count how many **single bomb units** it contains
-(`n_bomb_balls`). Rules-first, with an optional LLM fallback and a human
+(`n_bomb_balls`). Rules-only (title/text + catalog + HTML + Keepa), with a human
 review/label loop for building and scoring gold.
 
 ## Pipelines at a glance
@@ -18,13 +18,13 @@ Runs over all ~25k listings in stages, each adding columns to the frame:
 |-------|--------|--------------|
 | Load | `pipeline.load_products` | Read the input CSV, keep the relevant columns |
 | HTML extract | `html_extract.py` | Parse the scraped Amazon HTML per ASIN (title, bullets, description, "Number of Items"/"Unit Count"/"Package Quantity", size, weight). Cached per ASIN. Skippable with `--skip-html` |
+| Keepa (2nd source) | `keepa.py` | Join the Keepa product export on `asin` → `keepa_*` fields (numberOfItems, packageQuantity, features, description, images, variations). Used as a **fallback / second signal** for counts and purity. Toggle with `keepa.enabled`; degrades to null columns if the source is unavailable |
 | Purity | `purity.py` | Regex rules on the **title** (strict mode) → `is_pure_bath_bomb` ∈ {True, False, None}. Excludes kits/DIY/molds, mixed gift sets, non-bombs (salts/tablets/melts). Scope config toggles shower bombs / melts / fizz tablets |
 | Candidates | `counts.py` | Extract every possible count from title/size/bullets/description + catalog fields ("Set of 6", "12 bombs", "3 x 5oz"), each tagged with the pattern that matched |
-| Resolve | `resolve.py` | Pick the final `n_bomb_balls` via a priority ladder (text multi-count → number_of_items → HTML details → single default), set `count_confidence`/`count_source`, flag `needs_llm` on conflicts/undecided |
-| LLM (opt-in) | `llm.py` | With `--enable-llm`, send only `needs_llm` rows to the model (cached, logged); overrides purity/count only when it returns a value |
+| Resolve | `resolve.py` | Pick the final `n_bomb_balls` via a priority ladder (text multi-count → number_of_items → Keepa numberOfItems → HTML details → single default), set `count_confidence`/`count_source`, mark `count_unable` when no number can be justified |
 
-Outputs `output/product_counts.csv` (+ `needs_llm.csv`, `hard_cases.csv`, and an
-optional stratified `labeling_sample.csv`).
+Outputs `output/product_counts.csv` (and an optional stratified
+`labeling_sample.csv`).
 
 ### 2. Labeling & evaluation pipeline — `label_ui.py` · `seed_labels.py` · `eval_gold.py`
 
@@ -55,7 +55,7 @@ flowchart TD
   NB -->|"yes · 502 (2.0%)"| ENB["EXCLUDE: not_bath_bomb"]
   NB -->|no| P{"Bomb phrase in title?"}
   P -->|"yes · 16,025 (63.2%)"| PURE["PURE — count it"]
-  P -->|"no · 7,300 (28.8%)"| U["UNCLEAR — route to needs_llm"]
+  P -->|"no · 7,300 (28.8%)"| U["UNCLEAR — provisional count, flag for review"]
 ```
 
 | Rule (`purity_source`) | Fired | Share |
@@ -93,20 +93,23 @@ A precedence ladder; first tier with a value >1 wins. Shares are of the 16,025 p
 ```mermaid
 flowchart TD
   S["Pure product"] --> L1{"Text multi-count?<br/>title &gt; bullets &gt; size &gt; description"}
-  L1 -->|"yes · 5,823 (36.3%) · high/medium"| C1["use it"]
+  L1 -->|"yes · high/medium"| C1["use it"]
   L1 -->|no| L2{"number_of_items &gt; 1?"}
-  L2 -->|"yes · 303 (1.9%) · medium"| C2["use it"]
-  L2 -->|no| L3{"HTML details &gt; 1?"}
-  L3 -->|"yes · 484 (3.0%) · medium"| C3["use it"]
+  L2 -->|"yes · medium"| C2["use it"]
+  L2 -->|no| L2b{"keepa numberOfItems / packageQuantity &gt; 1?"}
+  L2b -->|"yes · medium"| C2b["use it (keepa_number_of_items)"]
+  L2b -->|no| L3{"HTML details &gt; 1?"}
+  L3 -->|"yes · medium"| C3["use it"]
   L3 -->|no| L4{"any signal == 1?"}
   L4 -->|"yes · 2,442 (15.2%) · med/low"| C4["n = 1 (single_default)"]
   L4 -->|"no · 6,973 (43.5%) · low"| C5["n = 1 (assumed_single) ⚠"]
 ```
 
 Flags set alongside the number:
-- **`seller_counts_pack_as_one`** (631 rows) — text says a multi-count but a catalog
+- **`seller_counts_pack_as_one`** — text says a multi-count but a catalog
   field says 1. Recorded only; **does not change the count**.
-- **conflict** — text multi-count ≠ catalog multi-count → forces `needs_llm=True`.
+- **`count_unable`** — no number could be justified (no count wording and no
+  catalog signal); surfaces the row for human review.
 
 **Where the volume actually goes** (pure products): `assumed_single` **43.5%** is
 the single largest source — i.e. nearly half of all counts are the "no evidence →
@@ -119,13 +122,12 @@ Overall confidence: low 61.8% · high 21.5% · medium 8.6% · n/a 8.0%.
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
-cp .env.example .env   # then paste OPENAI_API_KEY into .env (only needed for --enable-llm)
 ```
 
 ## Recommended workflow
 
 ```bash
-# 1) Rules + HTML parse (LLM off by default). Assigns a count unless unable.
+# 1) Rules + HTML + Keepa. Assigns a count unless the rules are unable to.
 .venv/bin/python scripts/run_pipeline.py --labeling-sample
 
 # Smoke without HTML:
@@ -138,10 +140,7 @@ cp .env.example .env   # then paste OPENAI_API_KEY into .env (only needed for --
 .venv/bin/python scripts/seed_labels.py --dry-run   # preview count
 .venv/bin/python scripts/seed_labels.py             # write model_seed annotations
 
-# 3) Later: improve unsure/undecided rows only (needs_llm=True)
-.venv/bin/python scripts/run_pipeline.py --enable-llm
-
-# 4) Score vs gold — defaults to the held-out EVAL split (honest)
+# 3) Score vs gold — defaults to the held-out EVAL split (honest)
 .venv/bin/python scripts/eval_gold.py --rebuild             # rebuild gold from annotations, score eval
 .venv/bin/python scripts/eval_gold.py --split all --report  # full report: confusion, F1, by-confidence/stratum, errors
 .venv/bin/python scripts/eval_gold.py --split all --report --out output/gold_metrics.json
@@ -164,14 +163,14 @@ model is never scored on labels it produced itself:
 
 ## Results (current run)
 
-Counting pipeline over **25,357 listings** (rules + HTML, LLM off):
+Counting pipeline over **25,357 listings** (rules + HTML + Keepa):
 
 | Metric | Value |
 |--------|-------|
 | Pure bath bombs (count assigned) | **16,025** (63%) |
 | Excluded | 2,032 — mixed_set 974 · kit 556 · not_bath_bomb 502 |
 | Unclear (purity undecided) | 7,300 |
-| Queued for LLM (`needs_llm`) | 7,737 |
+| Unable to count (`count_unable`) | ~3,858 |
 | Confidence: high / medium / low | 5,457 · 2,190 · 15,678 |
 
 Model evaluation vs **50 human labels** (`eval_gold.py --report`):
@@ -186,10 +185,10 @@ Purity confusion (all): TP 18 · FP 2 · **FN 5** · TN 12. Calibration is sane 
 
 Key findings driving the next iteration:
 - **Recall < precision (0.78 vs 0.90): the rules over-exclude.** 5 pure products
-  were wrongly marked not-pure — the LLM pass targets exactly these.
+  were wrongly marked not-pure — a target for better title/support rules.
 - **Count errors are single-vs-multipack:** every count miss is `pred=1` vs a real
   6–16, i.e. the `assumed_single` default undercounts packs with no count wording.
-- **`needs_llm` stratum purity ≈ 60%** — confirms those rows genuinely need the LLM.
+  The Keepa `numberOfItems` join recovers ~2,100 of these (see below).
 
 > Gold is still small (50 labels; 6 held out), so treat the `eval` row as
 > directional — the priority is to grow and double-label the eval slice.
@@ -202,16 +201,27 @@ Key findings driving the next iteration:
 | `purity.strict` | `true` | Title-primary exclude/include (fewer false kit excludes from feature text) |
 | `scope.include_shower_bombs` | `true` | Count shower bombs |
 | `scope.include_bath_melts` / `include_fizz_tablets` | `false` | Out of scope |
-| `llm.enabled` | `false` | Stay off until you pass `--enable-llm` |
+| `keepa.enabled` | `true` | Join the Keepa export (`paths.keepa_csv`) as a second source. Off → null `keepa_*` columns |
+
+### Two-source comparison (Keepa vs amazon_web_scraping)
+
+Both sources cover the same **25,357 ASINs (perfect 1:1 join)**. They are
+complementary, so Keepa is wired as a fallback rather than a replacement:
+
+| Field | amazon_web_scraping | Keepa | Wiring |
+|---|---|---|---|
+| `number_of_items` | 2,493 present | **12,714 present** (99.8% agree where both) | Keepa fills the count ladder → **+2,154 products counted, +2,103 multi-packs** |
+| images | `image_num` count only, 20,880 | **imagesCSV URLs, all rows** (97% non-empty) | `keepa_main_image_url` / `keepa_image_count`; UI thumbnail fallback |
+| variations | 2,627 | **all rows** (`variationCSV`) | `keepa_variation_count` |
+| features | 62% non-empty | **75% non-empty** | added to bullets text for count regexes |
+| description | **93% non-empty** | 51% | scrape stays primary; Keepa fallback |
+| title | — | 59% exact match (different snapshot) | Keepa title only as last-resort fallback |
 
 ## Outputs
 
 | Path | Role |
 |------|------|
-| `output/product_counts.csv` | Predictions (`n_bomb_balls`, `needs_llm`, …) |
-| `output/needs_llm.csv` | Unsure / undecided rows for a later LLM pass |
+| `output/product_counts.csv` | Predictions (`n_bomb_balls`, `count_confidence`, `count_unable`, `keepa_*`, …) |
 | `output/labeling_sample.csv` | Stratified sheet feeding the labeler |
 | `data/gold/annotations.csv` | Raw multi-annotator labels (human + model_seed, with split) |
 | `data/gold/gold_labels.csv` | Adjudicated human-only gold, derived from annotations |
-| `prompts/count_v1.md` | Frozen LLM prompt |
-| `.env` | `OPENAI_API_KEY=...` (gitignored) |

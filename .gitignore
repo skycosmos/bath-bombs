@@ -1,8 +1,8 @@
-output/
-!output/**/.gitkeep
-data/gold/*
-!data/gold/manual_labels.csv
-!data/gold/.gitkeep
+# Generated pipeline outputs are regenerable and gitignored; the manual labels
+# (human-produced ground truth) and dir markers are kept.
+output/**/*.csv
+output/**/*.json
+!output/label_check/manual_labels.csv
 __pycache__/
 *.pyc
 .DS_Store

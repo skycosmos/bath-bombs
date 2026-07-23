@@ -13,7 +13,14 @@ Launch:
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
+
+# Put both code subfolders on the path so this UI can import the shared config
+# (in filter_count/) and the labeling helpers (here in label_check/).
+_CODE = Path(__file__).resolve().parents[1]
+for _sub in ("filter_count", "label_check"):
+    sys.path.insert(0, str(_CODE / _sub))
 
 import pandas as pd
 import streamlit as st

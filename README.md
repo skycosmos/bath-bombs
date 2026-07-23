@@ -17,11 +17,11 @@ python3 -m venv .venv
 ## Pipelines
 
 ```bash
-# 1-3) Read + consolidate data → purify → count. Writes output/product_counts.csv
-.venv/bin/python code/run_pipeline.py --labeling-sample
+# 1-3) Read + consolidate data → purify → count. Writes output/filter_count/product_counts.csv
+.venv/bin/python code/filter_count/run_pipeline.py --labeling-sample
 
-# 4) Manual review / label UI (writes data/gold/manual_labels.csv)
-.venv/bin/streamlit run code/label_ui.py
+# 4) Manual review / label UI (writes output/label_check/manual_labels.csv)
+.venv/bin/streamlit run code/label_check/label_ui.py
 ```
 
 ### 1. Data (`data.py`)
@@ -54,11 +54,11 @@ text (title>bullets>size>description) → number_of_items
 No count evidence → assume a single unit (low confidence). Outputs
 `n_bomb_balls`, `count_source`, `count_confidence`.
 
-### 4. Review UI (`scripts/label_ui.py`, `labeling.py`)
+### 4. Review UI (`code/label_check/label_ui.py`, `labeling.py`)
 Streamlit console to check/correct predictions: product image, evidence and
 candidate-count panels, optional scraped-page render, and a label form. Labels
-save to `data/gold/manual_labels.csv` (one row per ASIN, latest wins). A
-stratified `labeling_sample.csv` (`--labeling-sample`) seeds the queue.
+save to `output/label_check/manual_labels.csv` (one row per ASIN, latest wins).
+A stratified `labeling_sample.csv` (`--labeling-sample`) seeds the queue.
 
 ## Config map (`config.yml`)
 
@@ -74,18 +74,22 @@ stratified `labeling_sample.csv` (`--labeling-sample`) seeds the queue.
 
 ## Layout
 
+Both `code/` and `output/` split into the same two areas — **`filter_count`**
+(the automated pipeline) and **`label_check`** (manual review):
+
 ```
-config.yml                  # single source of truth
+config.yml                              # single source of truth
 code/
-  data.py                   # 1) read + consolidate
-  purity.py                 # 2) purification
-  counting.py               # 3) counting
-  labeling.py               # 4) label store + taxonomy + sampling
-  pipeline.py               # orchestration
-  run_pipeline.py           # CLI
-  label_ui.py               # review UI
-output/product_counts.csv   # predictions
-data/gold/manual_labels.csv # manual labels
+  filter_count/                         # machine: read → filter/purify → count
+    config.py  data.py  purity.py  counting.py  pipeline.py  run_pipeline.py
+  label_check/                          # manual: label + check
+    labeling.py  label_ui.py
+output/
+  filter_count/
+    product_counts.csv                  # ← FINAL machine output (predictions)
+    labeling_sample.csv                 # review queue for the UI
+  label_check/
+    manual_labels.csv                   # ← FINAL manual output (human labels)
 ```
 
 ## Results (current run)

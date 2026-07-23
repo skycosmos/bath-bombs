@@ -12,9 +12,9 @@ paths:
   amazon_dir: "/Users/tzheng/Library/CloudStorage/Dropbox-HarvardUniversity/Tianyu Zheng/ASIN_number_of_units/amazon_web_scraping/asin_level/csv/bath_bombs_all"
   keepa_dir:  "/Users/tzheng/Library/CloudStorage/Dropbox-HarvardUniversity/Tianyu Zheng/ASIN_number_of_units/keepa_data/bath_bombs_all/product/static"
   html_dir:   "/Users/tzheng/Library/CloudStorage/Dropbox-HarvardUniversity/Tianyu Zheng/ASIN_number_of_units/amazon_web_scraping/asin_level/html/bath_bombs_all/bath_bombs_all"
-  output_csv:          output/product_counts.csv
-  labeling_sample_csv: output/labeling_sample.csv
-  manual_labels_csv:   data/gold/manual_labels.csv
+  output_csv:          output/filter_count/product_counts.csv
+  labeling_sample_csv: output/filter_count/labeling_sample.csv
+  manual_labels_csv:   output/label_check/manual_labels.csv
 
 # ----------------------------------------------------------------------------
 # 1) Data consolidation — Amazon scrape (primary) + Keepa (second source).

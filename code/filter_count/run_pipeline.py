@@ -3,6 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import sys
+from pathlib import Path
+
+# Put both code subfolders on the path so modules import each other flatly.
+_CODE = Path(__file__).resolve().parents[1]
+for _sub in ("filter_count", "label_check"):
+    sys.path.insert(0, str(_CODE / _sub))
 
 from pipeline import run_pipeline
 

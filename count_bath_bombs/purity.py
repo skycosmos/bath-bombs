@@ -191,17 +191,3 @@ def classify_purity(row: pd.Series, scope: dict, purity_cfg: dict | None = None)
 
     # 7. Unclassified — no bomb phrase and no other signal; excluded, flag for review.
     return PurityResult(False, "unclassified", True, "rule_unclassified")
-
-
-def apply_purity(
-    df: pd.DataFrame,
-    scope: dict,
-    purity_cfg: dict | None = None,
-) -> pd.DataFrame:
-    out = df.copy()
-    results = [classify_purity(row, scope, purity_cfg) for _, row in out.iterrows()]
-    out["is_pure_bath_bomb"] = [r.is_pure_bath_bomb for r in results]
-    out["exclude_reason"] = [r.exclude_reason for r in results]
-    out["needs_review"] = [r.needs_review for r in results]
-    out["purity_source"] = [r.purity_source for r in results]
-    return out

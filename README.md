@@ -3,7 +3,7 @@
 For each Amazon listing, decide whether it is a **pure finished bath-bomb
 product** and, if so, count how many **single bomb units** it contains
 (`n_bomb_balls`). Rules-only (title/text + catalog + Keepa), with a human
-review/label loop for building and checking gold.
+review/label loop for building and checking a manual-label set.
 
 ## Pipelines at a glance
 
@@ -17,19 +17,17 @@ Runs over all ~25k listings in stages, each adding columns to the frame:
 |-------|--------|--------------|
 | Load | `pipeline.load_products` | Read the input CSV, keep the relevant columns |
 | Keepa (2nd source) | `keepa.py` | Join the Keepa product export on `asin` → `keepa_*` fields (numberOfItems, packageQuantity, features, description, images, variations). Used as a **fallback / second signal** for counts and purity. Toggle with `keepa.enabled`; degrades to null columns if the source is unavailable |
-| Purity | `purity.py` | Regex rules on the **title** (strict mode) → `is_pure_bath_bomb` ∈ {True, False} + `exclude_reason`. A six-detector ladder (craft_kit / bundle / substitute / toiletry / unclassified). Scope config toggles shower bombs / steamers / melts / fizz tablets |
-| Candidates | `counts.py` | Extract every possible count from title/size/bullets/description + catalog fields ("Set of 6", "12 bombs", "3 x 5oz"), each tagged with the pattern that matched |
-| Resolve | `resolve.py` | For **pure** items only, pick the final `n_bomb_balls` via a priority ladder (text multi-count → number_of_items → Keepa numberOfItems → label_unit_num → single default), set `count_confidence` / `count_source`. Excluded items get no count |
+| Classify + count | `purity.py` + `counting.py` | One row-wise pass: **Purity** — regex rules on the **title** (strict mode) → `is_pure_bath_bomb` ∈ {True, False} + `exclude_reason` via a six-detector ladder (craft_kit / bundle / substitute / toiletry / unclassified); then **Candidates** — extract every possible count from title/size/bullets/description + catalog fields; then **Resolve** — for **pure** items only, pick `n_bomb_balls` via a priority ladder, set `count_confidence` / `count_source` (`pipeline.classify_and_count`) |
 
 Outputs `output/product_counts.csv` (and an optional stratified
 `labeling_sample.csv`).
 
 ### 2. Review pipeline — `label_ui.py` · `eval_gold.py`
 
-Review in the Streamlit console → labels land in `annotations.csv` → adjudicated
-(majority vote per ASIN) into `gold_labels.csv` → `eval_gold.py` compares the rule
-predictions against that human gold. No train/eval split, no model seeding — just
-rules vs. human labels.
+Single reviewer: label in the Streamlit console → one row per ASIN lands in
+`manual_labels.csv` (latest label per ASIN wins) → `eval_gold.py` compares the
+rule predictions against those manual labels. No multi-annotator adjudication,
+no train/eval split, no model seeding.
 
 ## Counting SOP (annotated with live volumes)
 
@@ -74,7 +72,7 @@ flowchart TD
 - **TOILETRY** excludes only when there is no bomb phrase. `bath ball` / `cauldron` are toiletry-only words: a lone "Bath Ball" is toiletry, but "Magic Bath Balls … Bath Bombs" / "Cauldron Bath Bomb" stay PURE.
 - **UNCLASSIFIED** — no bomb phrase and no other signal; excluded, flagged for review.
 
-### Stage 2 — Detect candidate numbers (`counts.py`)
+### Stage 2 — Detect candidate numbers (`counting.py`)
 
 Five regexes scan four **text channels** separately; each keeps **one** number —
 lowest-priority pattern, preferring values >1:
@@ -103,7 +101,7 @@ Catalog integers are read as-is (>0): `number_of_items`, Keepa `numberOfItems` /
 > **weakest/most generic** — they match any number next to "pack/pcs/count",
 > which is where scent-count and size false positives creep in.
 
-### Stage 3 — Choose the number (`resolve.py`)
+### Stage 3 — Choose the number (`counting.py`)
 
 **Only pure products are counted.** A precedence ladder; first tier with a value
 >1 wins. Shares are of the **11,645 pure** products.
@@ -148,25 +146,22 @@ python3 -m venv .venv
 # 2) Review + label in the browser (thumbnail, evidence, optional Amazon-page view)
 .venv/bin/streamlit run scripts/label_ui.py
 
-# 3) Compare the rules against the human gold
-.venv/bin/python scripts/eval_gold.py --rebuild            # rebuild gold from annotations, then score
-.venv/bin/python scripts/eval_gold.py --report             # full report: confusion, F1, by-confidence/stratum, errors
-.venv/bin/python scripts/eval_gold.py --report --out output/gold_metrics.json
+# 3) Compare the rules against the manual labels
+.venv/bin/python scripts/eval_gold.py                      # headline metrics
+.venv/bin/python scripts/eval_gold.py --report             # full report: confusion, F1, by-confidence/class, errors
+.venv/bin/python scripts/eval_gold.py --report --out output/manual_metrics.json
 ```
 
-## Labeling / gold model
+## Manual labeling
 
-- `data/gold/annotations.csv` — every raw label, one row per (ASIN, annotator).
-- `data/gold/gold_labels.csv` — **derived**, one adjudicated row per ASIN
-  (majority vote, ties → most recent). Rebuilt automatically on each save and by
-  `eval_gold.py --rebuild`.
+- `data/gold/manual_labels.csv` — **one row per ASIN**; saving in the console
+  upserts by ASIN, so the **latest label wins**. Single reviewer, no adjudication.
 - The Streamlit **Review** tab shows the rule prediction + evidence and lets you
   confirm/correct it (`is_pure_bath_bomb`, `n_bomb_balls`, `exclude_reason`). Two
   independent sidebar filters: **Classification** (pure / craft_kit / bundle /
   substitute / toiletry / unclassified) and **Counting** (multi_pack / single /
   pack_as_one / extreme_count).
-- The **Dashboard** tab shows progress, inter-annotator agreement (purity/count
-  agreement + Cohen's κ) and a plain human-gold-vs-rule comparison.
+- The **Dashboard** tab shows progress and a plain manual-labels-vs-rule comparison.
 
 ## Results (current run)
 
@@ -181,8 +176,9 @@ Counting pipeline over **25,357 listings** (rules over product CSV + Keepa):
 > Purity is deliberately strict: shower steamers/salts/tablets/melts
 > (`substitute`), bath-bomb-plus-item sets (`bundle`), raw ingredients like citric
 > acid (`toiletry`), and titles with no bomb phrase (`unclassified`) are all
-> excluded. Grow the gold set via the Review console, then `eval_gold.py --report`
-> to measure accuracy — the small existing gold predates the current rules.
+> excluded. Grow the manual-label set via the Review console, then
+> `eval_gold.py --report` to measure accuracy — the small existing set predates
+> the current rules.
 
 ## Config knobs
 
@@ -214,5 +210,4 @@ complementary, so Keepa is wired as a fallback rather than a replacement:
 |------|------|
 | `output/product_counts.csv` | Predictions (`is_pure_bath_bomb`, `exclude_reason`, `n_bomb_balls`, `count_confidence`, `count_source`, `keepa_*`, …) |
 | `output/labeling_sample.csv` | Stratified review sheet (`class_label` / `count_label` per row) |
-| `data/gold/annotations.csv` | Raw multi-annotator labels |
-| `data/gold/gold_labels.csv` | Adjudicated gold, derived from annotations |
+| `data/gold/manual_labels.csv` | Manual labels, one row per ASIN (latest wins) |

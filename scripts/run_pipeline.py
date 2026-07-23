@@ -17,13 +17,6 @@ from count_bath_bombs.pipeline import run_pipeline
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--config", default=None, help="Path to config/pipeline.yml")
-    p.add_argument("--skip-html", action="store_true", help="Skip HTML parse (CSV-only rules)")
-    p.add_argument(
-        "--html-limit",
-        type=int,
-        default=None,
-        help="Only parse/cache HTML for the first N rows (smoke test)",
-    )
     p.add_argument(
         "--labeling-sample",
         action="store_true",
@@ -33,8 +26,6 @@ def main() -> None:
 
     run_pipeline(
         args.config,
-        skip_html=args.skip_html,
-        html_limit=args.html_limit,
         write_labeling_sample=args.labeling_sample,
     )
 

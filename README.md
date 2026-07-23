@@ -2,7 +2,7 @@
 
 For each Amazon listing, decide whether it is a **pure finished bath-bomb
 product** and, if so, count how many **single bomb units** it contains
-(`n_bomb_balls`). Rules-only (title/text + catalog + HTML + Keepa), with a human
+(`n_bomb_balls`). Rules-only (title/text + catalog + Keepa), with a human
 review/label loop for building and checking gold.
 
 ## Pipelines at a glance
@@ -16,11 +16,10 @@ Runs over all ~25k listings in stages, each adding columns to the frame:
 | Stage | Module | What it does |
 |-------|--------|--------------|
 | Load | `pipeline.load_products` | Read the input CSV, keep the relevant columns |
-| HTML extract | `html_extract.py` | Parse the scraped Amazon HTML per ASIN (title, bullets, description, "Number of Items"/"Unit Count"/"Package Quantity", size, weight). Cached per ASIN. Skippable with `--skip-html` |
 | Keepa (2nd source) | `keepa.py` | Join the Keepa product export on `asin` → `keepa_*` fields (numberOfItems, packageQuantity, features, description, images, variations). Used as a **fallback / second signal** for counts and purity. Toggle with `keepa.enabled`; degrades to null columns if the source is unavailable |
 | Purity | `purity.py` | Regex rules on the **title** (strict mode) → `is_pure_bath_bomb` ∈ {True, False} + `exclude_reason`. A six-detector ladder (craft_kit / bundle / substitute / toiletry / unclassified). Scope config toggles shower bombs / steamers / melts / fizz tablets |
 | Candidates | `counts.py` | Extract every possible count from title/size/bullets/description + catalog fields ("Set of 6", "12 bombs", "3 x 5oz"), each tagged with the pattern that matched |
-| Resolve | `resolve.py` | For **pure** items only, pick the final `n_bomb_balls` via a priority ladder (text multi-count → number_of_items → Keepa numberOfItems → HTML details → single default), set `count_confidence` / `count_source`. Excluded items get no count |
+| Resolve | `resolve.py` | For **pure** items only, pick the final `n_bomb_balls` via a priority ladder (text multi-count → number_of_items → Keepa numberOfItems → label_unit_num → single default), set `count_confidence` / `count_source`. Excluded items get no count |
 
 Outputs `output/product_counts.csv` (and an optional stratified
 `labeling_sample.csv`).
@@ -84,8 +83,8 @@ lowest-priority pattern, preferring values >1:
 |---|---|
 | title | `title` |
 | size | `size` |
-| bullets | `html_bullets` + `feature` + `keepa_features` |
-| description | `product_description` + `html_description` + `keepa_description` |
+| bullets | `feature` + `keepa_features` |
+| description | `product_description` + `keepa_description` |
 
 | Priority | Pattern | Example |
 |---|---|---|
@@ -97,9 +96,8 @@ lowest-priority pattern, preferring values >1:
 | 5 | `near_pcs/pieces/count` | "24 pcs" |
 
 Catalog integers are read as-is (>0): `number_of_items`, Keepa `numberOfItems` /
-`packageQuantity`, HTML "Number of Items"/"Unit Count"/"Package Quantity", plus
-`unit_num` (when `unit_text`∈{count,each,unit}) and `label_unit_num` (when
-`label_unit` mentions "count").
+`packageQuantity`, plus `unit_num` (when `unit_text`∈{count,each,unit}) and
+`label_unit_num` (when `label_unit` mentions "count").
 
 > ⚠️ The high-volume patterns (`near_pack`, `near_pcs`, `near_count`) are the
 > **weakest/most generic** — they match any number next to "pack/pcs/count",
@@ -118,8 +116,8 @@ flowchart TD
   L2 -->|"yes · medium"| C2["use it"]
   L2 -->|no| L2b{"keepa numberOfItems / packageQuantity &gt; 1?"}
   L2b -->|"yes · 9.2% · medium"| C2b["use it (keepa_number_of_items)"]
-  L2b -->|no| L3{"HTML details &gt; 1?"}
-  L3 -->|"yes · medium"| C3["use it"]
+  L2b -->|no| L3{"label_unit_num &gt; 1?"}
+  L3 -->|"yes · 2.0% · medium"| C3["use it"]
   L3 -->|no| L4{"any signal == 1?"}
   L4 -->|"yes · 26.7% · med/low"| C4["n = 1 (single_default)"]
   L4 -->|"no · 24.2% · low"| C5["n = 1 (assumed_single) ⚠"]
@@ -131,7 +129,7 @@ Flags set alongside the number:
 
 **Where the volume goes** (of 11,645 pure): explicit **text count 35.7%** (title
 29.3% · bullets/desc/size 6.4%), **catalog 13.5%** (keepa 9.2% · number_of_items
-2.2% · html 2.0%), **single_default 26.7%**, **assumed_single 24.2%**.
+2.2% · label_unit_num 2.0%), **single_default 26.7%**, **assumed_single 24.2%**.
 Confidence: low 44.1% · high 32.5% · medium 23.3%.
 
 ## Setup
@@ -144,13 +142,10 @@ python3 -m venv .venv
 ## Recommended workflow
 
 ```bash
-# 1) Rules + HTML + Keepa. Counts every pure bath bomb.
+# 1) Rules over the product CSV + Keepa. Counts every pure bath bomb.
 .venv/bin/python scripts/run_pipeline.py --labeling-sample
 
-# Smoke without HTML:
-.venv/bin/python scripts/run_pipeline.py --skip-html --labeling-sample
-
-# 2) Review + label in the browser (thumbnail, evidence, scraped page render)
+# 2) Review + label in the browser (thumbnail, evidence, optional Amazon-page view)
 .venv/bin/streamlit run scripts/label_ui.py
 
 # 3) Compare the rules against the human gold
@@ -175,7 +170,7 @@ python3 -m venv .venv
 
 ## Results (current run)
 
-Counting pipeline over **25,357 listings** (rules + HTML + Keepa):
+Counting pipeline over **25,357 listings** (rules over product CSV + Keepa):
 
 | Metric | Value |
 |--------|-------|

@@ -32,7 +32,6 @@ from count_bath_bombs.gold import (
     class_label_for_row,
     count_label_for_row,
 )
-from count_bath_bombs.html_extract import extract_from_html
 
 st.set_page_config(page_title="Bath Bomb Review Console", layout="wide")
 
@@ -82,7 +81,7 @@ def _load_queue(cfg: dict) -> tuple[pd.DataFrame, str]:
     if queue is None:
         st.error(
             f"Missing or empty: `{path}`.\n\n"
-            "Run: `python scripts/run_pipeline.py --skip-html --labeling-sample`"
+            "Run: `python scripts/run_pipeline.py --labeling-sample`"
         )
         st.stop()
 
@@ -93,6 +92,106 @@ def _load_queue(cfg: dict) -> tuple[pd.DataFrame, str]:
         if extra:
             queue = queue.merge(full[["asin"] + extra], on="asin", how="left")
     return _ensure_labels(queue), source
+
+
+# --------------------------------------------------------------------------- #
+# Scraped-page HTML parser — used only by the optional "view Amazon page" panel
+# below (the counting pipeline no longer parses HTML).
+# --------------------------------------------------------------------------- #
+_DETAIL_KEYS = {
+    "number of items": "html_number_of_items",
+    "unit count": "html_unit_count",
+    "item package quantity": "html_item_package_quantity",
+    "size": "html_size",
+    "item weight": "html_item_weight",
+}
+
+
+def _clean_html_text(text: str) -> str:
+    text = re.sub(r"\s+", " ", text or "").strip()
+    # Amazon accessibility marks often leave stray RLM/LRM characters.
+    text = text.replace("‏", "").replace("‎", "")
+    text = re.sub(r"\s*:\s*", ": ", text)
+    return text.strip(" :")
+
+
+def _parse_number(text: str) -> float | None:
+    if not text:
+        return None
+    m = re.search(r"(\d+(?:\.\d+)?)", text.replace(",", ""))
+    return float(m.group(1)) if m else None
+
+
+def extract_from_html(html: str, max_bullets: int = 12, max_description_chars: int = 1200) -> dict:
+    """Parse a scraped Amazon product page into a clean dict (Reader view)."""
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html, "lxml")
+    title_el = soup.select_one("#productTitle")
+    title = _clean_html_text(title_el.get_text(" ", strip=True)) if title_el else None
+
+    details: dict[str, str] = {}
+    for table_sel in (
+        "#productDetails_techSpec_section_1",
+        "#productDetails_detailBullets_sections1",
+        "#productDetails_techSpec_section_2",
+    ):
+        table = soup.select_one(table_sel)
+        if not table:
+            continue
+        for tr in table.select("tr"):
+            th, td = tr.select_one("th"), tr.select_one("td")
+            if th and td:
+                details[_clean_html_text(th.get_text(" ", strip=True)).lower()] = _clean_html_text(
+                    td.get_text(" ", strip=True)
+                )
+
+    for li in soup.select("#detailBullets_feature_div li"):
+        raw = _clean_html_text(li.get_text(" ", strip=True))
+        if ":" in raw:
+            k, v = raw.split(":", 1)
+            details[k.strip().lower()] = v.strip()
+
+    for row in soup.select("#productOverview_feature_div tr"):
+        cells = row.select("td")
+        if len(cells) >= 2:
+            details[_clean_html_text(cells[0].get_text(" ", strip=True)).lower()] = _clean_html_text(
+                cells[1].get_text(" ", strip=True)
+            )
+
+    bullets: list[str] = []
+    for li in soup.select("#feature-bullets li"):
+        t = _clean_html_text(li.get_text(" ", strip=True))
+        if not t or "videos" in t.lower():
+            continue
+        bullets.append(t)
+        if len(bullets) >= max_bullets:
+            break
+
+    desc_el = soup.select_one("#productDescription")
+    description = _clean_html_text(desc_el.get_text(" ", strip=True)) if desc_el else ""
+    if len(description) > max_description_chars:
+        description = description[:max_description_chars]
+
+    out: dict = {
+        "html_title": title,
+        "html_bullets": " | ".join(bullets),
+        "html_description": description,
+        "html_number_of_items": None,
+        "html_unit_count": None,
+        "html_item_package_quantity": None,
+        "html_size": None,
+        "html_item_weight": None,
+    }
+    for key_substr, field in _DETAIL_KEYS.items():
+        for dk, dv in details.items():
+            if key_substr in dk:
+                if field in {"html_number_of_items", "html_unit_count", "html_item_package_quantity"}:
+                    out[field] = _parse_number(dv)
+                else:
+                    out[field] = dv
+                break
+    return out
 
 
 @st.cache_data(show_spinner=False, max_entries=8)
@@ -341,9 +440,6 @@ def _evidence_panel(row: pd.Series) -> None:
         ("bullets", "cand_bullets", "cand_bullets_pattern"),
         ("description", "cand_description", "cand_description_pattern"),
         ("number_of_items", "cand_number_of_items", None),
-        ("html_number_of_items", "cand_html_number_of_items", None),
-        ("html_unit_count", "cand_html_unit_count", None),
-        ("html_package_qty", "cand_html_package_qty", None),
         ("keepa_number_of_items", "cand_keepa_number_of_items", None),
         ("keepa_package_qty", "cand_keepa_package_qty", None),
         ("unit_num", "cand_unit_num", None),
@@ -377,14 +473,14 @@ def _catalog_panel(row: pd.Series) -> None:
 
 
 def _text_panel(row: pd.Series) -> None:
-    bullets = _clean(row.get("html_bullets")) or _clean(row.get("feature"))
+    bullets = _clean(row.get("feature")) or _clean(row.get("keepa_features"))
     if isinstance(bullets, str) and bullets.strip():
         with st.expander("Bullets / features", expanded=True):
             for b in str(bullets).split(" | "):
                 b = b.strip()
                 if b:
                     st.markdown(f"- {b}")
-    desc = _clean(row.get("html_description")) or _clean(row.get("product_description"))
+    desc = _clean(row.get("product_description")) or _clean(row.get("keepa_description"))
     if isinstance(desc, str) and desc.strip():
         with st.expander("Product description"):
             st.write(str(desc)[:4000])

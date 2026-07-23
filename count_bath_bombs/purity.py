@@ -135,7 +135,7 @@ class PurityResult:
 
 
 def _title_text(row: pd.Series) -> str:
-    return str(row.get("title") or row.get("html_title") or row.get("keepa_title") or "")
+    return str(row.get("title") or row.get("keepa_title") or "")
 
 
 def _support_text(row: pd.Series) -> str:
@@ -143,8 +143,6 @@ def _support_text(row: pd.Series) -> str:
     parts = [
         str(row.get("feature") or ""),
         str(row.get("product_description") or ""),
-        str(row.get("html_bullets") or ""),
-        str(row.get("html_description") or ""),
         str(row.get("keepa_features") or ""),
         str(row.get("keepa_description") or ""),
     ]

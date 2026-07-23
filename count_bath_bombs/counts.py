@@ -101,20 +101,15 @@ def extract_candidates(row: pd.Series) -> dict[str, Any]:
     feature = str(row.get("feature") or "")
     desc = str(row.get("product_description") or "")
     size = str(row.get("size") or "")
-    bullets = str(row.get("html_bullets") or "")
-    html_desc = str(row.get("html_description") or "")
     keepa_features = str(row.get("keepa_features") or "")
     keepa_desc = str(row.get("keepa_description") or "")
 
     title_n, title_pat = best_text_count(title)
     size_n, size_pat = best_text_count(size)
-    bullets_n, bullets_pat = best_text_count(bullets + "\n" + feature + "\n" + keepa_features)
-    desc_n, desc_pat = best_text_count(desc + "\n" + html_desc + "\n" + keepa_desc)
+    bullets_n, bullets_pat = best_text_count(feature + "\n" + keepa_features)
+    desc_n, desc_pat = best_text_count(desc + "\n" + keepa_desc)
 
     number_of_items = _to_int(row.get("number_of_items"))
-    html_number_of_items = _to_int(row.get("html_number_of_items"))
-    html_unit_count = _to_int(row.get("html_unit_count"))
-    html_package_qty = _to_int(row.get("html_item_package_quantity"))
     keepa_number_of_items = _to_int(row.get("keepa_number_of_items"))
     keepa_package_qty = _to_int(row.get("keepa_package_quantity"))
     unit_num = _to_int(row.get("unit_num")) if str(row.get("unit_text") or "").lower() in {
@@ -138,9 +133,6 @@ def extract_candidates(row: pd.Series) -> dict[str, Any]:
         "cand_description": desc_n,
         "cand_description_pattern": desc_pat,
         "cand_number_of_items": number_of_items,
-        "cand_html_number_of_items": html_number_of_items,
-        "cand_html_unit_count": html_unit_count,
-        "cand_html_package_qty": html_package_qty,
         "cand_keepa_number_of_items": keepa_number_of_items,
         "cand_keepa_package_qty": keepa_package_qty,
         "cand_unit_num": unit_num,

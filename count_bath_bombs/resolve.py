@@ -19,9 +19,6 @@ def _cand_count_guess(row: pd.Series) -> tuple[int | None, str | None, str]:
     size_n = row.get("cand_size")
     desc_n = row.get("cand_description")
     noi = row.get("cand_number_of_items")
-    html_noi = row.get("cand_html_number_of_items")
-    html_unit = row.get("cand_html_unit_count")
-    html_pkg = row.get("cand_html_package_qty")
     keepa_noi = row.get("cand_keepa_number_of_items")
     keepa_pkg = row.get("cand_keepa_package_qty")
     label_n = row.get("cand_label_unit_num")
@@ -49,12 +46,11 @@ def _cand_count_guess(row: pd.Series) -> tuple[int | None, str | None, str]:
     if keepa_multi is not None:
         return keepa_multi, "keepa_number_of_items", "medium"
 
-    html_multi = _first_multi(html_noi, html_unit, html_pkg, label_n)
-    if html_multi is not None:
-        return html_multi, "html_details", "medium"
+    if label_n is not None and label_n > 1:
+        return int(label_n), "label_unit_num", "medium"
 
     text_one = title_n == 1 or bullets_n == 1 or size_n == 1
-    if noi == 1 or html_noi == 1 or html_unit == 1 or text_one or label_n == 1 or keepa_noi == 1:
+    if noi == 1 or text_one or label_n == 1 or keepa_noi == 1:
         conf = "medium" if (noi == 1 or text_one) else "low"
         return 1, "single_default", conf
 
@@ -67,9 +63,6 @@ def resolve_row(row: pd.Series) -> dict[str, Any]:
     is_pure = row.get("is_pure_bath_bomb")
     title_n = row.get("cand_title")
     noi = row.get("cand_number_of_items")
-    html_noi = row.get("cand_html_number_of_items")
-    html_unit = row.get("cand_html_unit_count")
-    html_pkg = row.get("cand_html_package_qty")
     keepa_noi = row.get("cand_keepa_number_of_items")
     keepa_pkg = row.get("cand_keepa_package_qty")
     unit_num = row.get("cand_unit_num")
@@ -81,7 +74,7 @@ def resolve_row(row: pd.Series) -> dict[str, Any]:
         row.get("cand_description"),
     )
     catalog_ones = [
-        v for v in (noi, html_noi, html_unit, html_pkg, keepa_noi, keepa_pkg, unit_num) if v == 1
+        v for v in (noi, keepa_noi, keepa_pkg, unit_num) if v == 1
     ]
     seller_pack_as_one = bool(text_multi and catalog_ones)
 

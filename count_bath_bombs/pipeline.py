@@ -9,7 +9,6 @@ import pandas as pd
 from count_bath_bombs.config import load_config
 from count_bath_bombs.counts import apply_candidates
 from count_bath_bombs.gold import build_labeling_sample, evaluate_against_gold
-from count_bath_bombs.html_extract import attach_html_extracts
 from count_bath_bombs.keepa import IMAGE_URL_PREFIX, KEEPA_FIELDS, attach_keepa
 from count_bath_bombs.purity import apply_purity
 from count_bath_bombs.resolve import apply_resolver
@@ -28,36 +27,12 @@ def load_products(cfg: dict[str, Any]) -> pd.DataFrame:
 def run_pipeline(
     config_path: str | Path | None = None,
     *,
-    skip_html: bool = False,
-    html_limit: int | None = None,
     write_labeling_sample: bool = False,
 ) -> pd.DataFrame:
-    """Rules + HTML + Keepa. Assigns a count unless the rules are unable to."""
+    """Rules over the product CSV + Keepa. Counts every pure bath bomb."""
     cfg = load_config(config_path)
 
     df = load_products(cfg)
-
-    if not skip_html:
-        df = attach_html_extracts(
-            df,
-            html_dir=cfg["paths"]["html_dir"],
-            cache_dir=cfg["paths"]["html_cache_dir"],
-            max_bullets=int(cfg["html"]["max_bullets"]),
-            max_description_chars=int(cfg["html"]["max_description_chars"]),
-            limit=html_limit,
-        )
-    else:
-        for col in (
-            "html_bullets",
-            "html_description",
-            "html_number_of_items",
-            "html_unit_count",
-            "html_item_package_quantity",
-            "html_size",
-            "html_item_weight",
-        ):
-            if col not in df.columns:
-                df[col] = None
 
     keepa_cfg = cfg.get("keepa", {})
     if keepa_cfg.get("enabled", False):

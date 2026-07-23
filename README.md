@@ -34,12 +34,14 @@ Classifies each title against config word lists (`purity.lexicon`). Ladder,
 first match wins:
 
 ```
-craft_kit → bundle → substitute → ingredient → toiletry → pure → unclassified
+craft_kit → bundle → substitute → (no bomb) unclassified
+  → (ingredient before bomb) unclassified → pure
 ```
 
-A `bomb_positive` phrase rescues a title from substitute/ingredient/toiletry
-(but not craft_kit or bundle). Only `pure` listings are counted; every other
-class is an `exclude_reason`.
+A listing is **pure** only if a bath-bomb phrase leads the title with nothing
+disqualifying before it. Anything without bomb wording up front is excluded as
+`unclassified`. Only `pure` listings are counted; every other class is an
+`exclude_reason` (craft_kit / bundle / substitute / unclassified).
 
 ### 3. Counting (`counting.py`)
 For pure listings, scans the text channels for count phrases (`counting.patterns`,
@@ -66,7 +68,6 @@ A stratified `labeling_sample.csv` (`--labeling-sample`) seeds the queue.
 |---------|----------|
 | `paths` | Amazon / Keepa / HTML folders, output + label CSVs |
 | `amazon_columns`, `keepa` | Which source columns to keep / join |
-| `scope` | Whether shower bombs / steamers / melts / tablets count |
 | `purity.lexicon` | Every word set per exclusion class |
 | `counting.patterns` / `pattern_priority` | Count regexes + tie-break priority |
 | `counting.resolution_order` / `confidence` | Which signal wins, and its confidence |

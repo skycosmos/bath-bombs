@@ -33,21 +33,18 @@ keepa:
 
 # ----------------------------------------------------------------------------
 # 2) Purification — is a listing a countable bath bomb?
-#   Ladder, first match wins:
-#     craft_kit -> bundle -> substitute -> ingredient -> toiletry -> pure -> unclassified
-#   A `bomb_positive` phrase in the title "rescues" a listing from the
-#   substitute / ingredient / toiletry checks (but not craft_kit or bundle).
+#   A listing is PURE only if a bath-bomb phrase LEADS the title (nothing
+#   disqualifying precedes it). Ladder, first match wins:
+#     craft_kit -> bundle -> substitute -> (no bomb phrase) unclassified
+#       -> (ingredient before bomb) unclassified -> pure
+#   Shower steamers / bath melts / fizz tablets are substitutes; shower bombs
+#   count as bath bombs.
 # ----------------------------------------------------------------------------
-scope:
-  include_shower_bombs: true
-  include_shower_steamers: false
-  include_bath_melts: false
-  include_fizz_tablets: false
-
 purity:
   strict: true          # match on TITLE only. false = also scan bullets/description.
   lexicon:
     # A countable, molded bath-bomb unit (also the rescue phrase).
+    # "shower bomb" counts as a bath bomb; only shower STEAMERS are substitutes.
     bomb_positive:
       - '\bbath bombs?\b'
       - '\bbath fizz(?:y|ies|er|ers)?\b'
@@ -65,8 +62,8 @@ purity:
       - '\bmoulds?\b'
       - '\bmolds?\b'
       - '\bbook\s*&\s*kit\b'
-    # Companion products sold WITH a bomb -> exclude "bundle".
-    # Soap is guarded so "Soap Co" / "soap-free" don't fire.
+    # Companion products sold WITH a bomb — incl. items hidden inside (necklace,
+    # ring, toy) -> exclude "bundle". Soap guarded vs "Soap Co" / "soap-free".
     companions:
       - '\bsoaps?\b(?!\s*-?\s*free)(?!\s*&?\s*co(?:mpany|\.)?\b)'
       - '\bcandles?\b'
@@ -81,30 +78,23 @@ purity:
       - '\bconditioners?\b'
       - '\bdiffusers?\b'
       - '\bpedicure\b'
-    # Toiletry-only words: exclude a LONE product (no bomb phrase) -> "toiletry",
-    # but do not trigger a bundle.
-    toiletry_only:
-      - '\bbath balls?\b'
+      - '\bbubble bath\b'
       - '\bcauldrons?\b'
-    # Non-bomb items hidden inside -> bundle.
-    hidden_items:
       - '\bnecklaces?\b'
       - '\brings?\b'
       - '\btoys?\b'
-    # Raw materials -> reported as "toiletry" (first-word adjudication vs bomb).
+    # Raw materials. If they appear before a bomb phrase -> unclassified.
     ingredients:
       - '\bcitric acid\b'
       - '\bbaking soda\b'
-    # Substitute product forms -> exclude "substitute". scope.* toggles which apply.
-    substitute_always:
+    # Substitute product forms (never bath bombs) -> exclude "substitute".
+    substitute:
       - '\bbath salts?\b'
       - '\bbath powder\b'
       - '\bbath beads?\b'
-      - '\bbubble bath\b(?!.*bomb)'
-    substitute_shower:      '\bshower (?:steamer|melt|tablet|disc|fizzy|fizzies|fizzers?)s?\b'  # unless include_shower_steamers
-    substitute_melt:        '\bbath melts?\b'                                                  # unless include_bath_melts
-    substitute_tablet:      '\b(?:fizz )?tablets?\b|\bbath drops?\b'                           # unless include_fizz_tablets
-    substitute_shower_bomb: '\bshower bombs?\b'                                                # only if not include_shower_bombs
+      - '\bshower (?:steamer|melt|tablet|disc|fizzy|fizzies|fizzers?)s?\b'
+      - '\bbath melts?\b'
+      - '\b(?:fizz )?tablets?\b|\bbath drops?\b'
     # Bundle context helpers ("... with a surprise hidden inside").
     surprise: '\bsurprise\b'
     inside:   '\b(?:inside|hidden)\b'
@@ -173,5 +163,5 @@ counting:
 labeling:
   sample_size: 300
   seed: 42
-  class_labels: [pure, craft_kit, bundle, substitute, toiletry, unclassified]
+  class_labels: [pure, craft_kit, bundle, substitute, unclassified]
   count_labels: [multi_pack, single, pack_as_one, extreme_count, count_unable, "n/a"]

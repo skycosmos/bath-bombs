@@ -1,1 +1,177 @@
-DROPBOX_TOKEN: 
+# ============================================================================
+# Count Bath Bombs — single source of truth.
+# Every path, word list, and priority lives here; nothing is hardcoded in the
+# Python. Edit this file to retarget data, tune the rules, or change scope.
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# Paths. Data sources are folders — the newest *.csv inside each is loaded.
+# Relative output paths resolve against the repo root.
+# ----------------------------------------------------------------------------
+paths:
+  amazon_dir: "/Users/tzheng/Library/CloudStorage/Dropbox-HarvardUniversity/Tianyu Zheng/ASIN_number_of_units/amazon_web_scraping/asin_level/csv/bath_bombs_all"
+  keepa_dir:  "/Users/tzheng/Library/CloudStorage/Dropbox-HarvardUniversity/Tianyu Zheng/ASIN_number_of_units/keepa_data/bath_bombs_all/product/static"
+  html_dir:   "/Users/tzheng/Library/CloudStorage/Dropbox-HarvardUniversity/Tianyu Zheng/ASIN_number_of_units/amazon_web_scraping/asin_level/html/bath_bombs_all/bath_bombs_all"
+  output_csv:          output/product_counts.csv
+  labeling_sample_csv: output/labeling_sample.csv
+  manual_labels_csv:   data/gold/manual_labels.csv
+
+# ----------------------------------------------------------------------------
+# 1) Data consolidation — Amazon scrape (primary) + Keepa (second source).
+# ----------------------------------------------------------------------------
+amazon_columns: [asin, asin_in_html, title, brand, manufacturer, price,
+  per_unit_price_text, unit_text, per_unit_price, unit_num, label_unit,
+  label_unit_num, number_of_items, item_weight, size, badge_label, image_num,
+  variation_quantity, product_dimensions, feature, product_description]
+
+keepa:
+  enabled: true
+  image_url_prefix: "https://m.media-amazon.com/images/I/"
+  # Keepa source columns read from the (large) export and joined on `asin`.
+  columns: [asin, title, brand, manufacturer, numberOfItems, packageQuantity,
+    itemWeight, size, features, description, imagesCSV, variationCSV]
+
+# ----------------------------------------------------------------------------
+# 2) Purification — is a listing a countable bath bomb?
+#   Ladder, first match wins:
+#     craft_kit -> bundle -> substitute -> ingredient -> toiletry -> pure -> unclassified
+#   A `bomb_positive` phrase in the title "rescues" a listing from the
+#   substitute / ingredient / toiletry checks (but not craft_kit or bundle).
+# ----------------------------------------------------------------------------
+scope:
+  include_shower_bombs: true
+  include_shower_steamers: false
+  include_bath_melts: false
+  include_fizz_tablets: false
+
+purity:
+  strict: true          # match on TITLE only. false = also scan bullets/description.
+  lexicon:
+    # A countable, molded bath-bomb unit (also the rescue phrase).
+    bomb_positive:
+      - '\bbath bombs?\b'
+      - '\bbath fizz(?:y|ies|er|ers)?\b'
+      - '\bbath bursts?\b'
+      - '\bbath blasters?\b'
+      - '\bshower bombs?\b'
+      - '\baromabombs?\b'
+    # Supplies to MAKE bombs, not finished bombs -> exclude "craft_kit".
+    craft_kit:
+      - '\bcraft kit\b'
+      - '\bdiy\b'
+      - '\bmake your own\b'
+      - '\bmake[- ]your[- ]own\b'
+      - '\bmaking kit\b'
+      - '\bmoulds?\b'
+      - '\bmolds?\b'
+      - '\bbook\s*&\s*kit\b'
+    # Companion products sold WITH a bomb -> exclude "bundle".
+    # Soap is guarded so "Soap Co" / "soap-free" don't fire.
+    companions:
+      - '\bsoaps?\b(?!\s*-?\s*free)(?!\s*&?\s*co(?:mpany|\.)?\b)'
+      - '\bcandles?\b'
+      - '\blotions?\b'
+      - '\bcleansing lotion\b'
+      - '\bshampoos?\b'
+      - '\bdry shampoo\b'
+      - '\bbody butters?\b'
+      - '\bbath creamers?\b'
+      - '\bbody wash\b'
+      - '\bshower gel\b'
+      - '\bconditioners?\b'
+      - '\bdiffusers?\b'
+      - '\bpedicure\b'
+    # Toiletry-only words: exclude a LONE product (no bomb phrase) -> "toiletry",
+    # but do not trigger a bundle.
+    toiletry_only:
+      - '\bbath balls?\b'
+      - '\bcauldrons?\b'
+    # Non-bomb items hidden inside -> bundle.
+    hidden_items:
+      - '\bnecklaces?\b'
+      - '\brings?\b'
+      - '\btoys?\b'
+    # Raw materials -> reported as "toiletry" (first-word adjudication vs bomb).
+    ingredients:
+      - '\bcitric acid\b'
+      - '\bbaking soda\b'
+    # Substitute product forms -> exclude "substitute". scope.* toggles which apply.
+    substitute_always:
+      - '\bbath salts?\b'
+      - '\bbath powder\b'
+      - '\bbath beads?\b'
+      - '\bbubble bath\b(?!.*bomb)'
+    substitute_shower:      '\bshower (?:steamer|melt|tablet|disc|fizzy|fizzies|fizzers?)s?\b'  # unless include_shower_steamers
+    substitute_melt:        '\bbath melts?\b'                                                  # unless include_bath_melts
+    substitute_tablet:      '\b(?:fizz )?tablets?\b|\bbath drops?\b'                           # unless include_fizz_tablets
+    substitute_shower_bomb: '\bshower bombs?\b'                                                # only if not include_shower_bombs
+    # Bundle context helpers ("... with a surprise hidden inside").
+    surprise: '\bsurprise\b'
+    inside:   '\b(?:inside|hidden)\b'
+
+# ----------------------------------------------------------------------------
+# 3) Counting — how many bomb units in a pure listing.
+#   patterns:          regexes that pull a number (named group `n`) from text.
+#   pattern_priority:  lower = more trusted when several fire in one field.
+#   resolution_order:  which signal wins the final count (first that yields >1).
+#   confidence:        confidence tag per winning signal.
+# ----------------------------------------------------------------------------
+counting:
+  # Text channels scanned for count phrases (output name -> source columns).
+  text_channels:
+    title:       [title]
+    size:        [size]
+    bullets:     [feature, keepa_features]
+    description: [product_description, keepa_description]
+  patterns:
+    set_of:          '\bset of\s+(?P<n>\d+)\b'
+    pack_of:         '\bpack of\s+(?P<n>\d+)\b'
+    n_count:         '\b(?P<n>\d+)\s*count\b'
+    x_bombs:         '\b(?P<n>\d+)\s*(?:x|×)\s*(?:\d+(?:\.\d+)?\s*(?:oz|ounce|oza|g|gram)s?\s+)?(?:bath\s+)?(?:bombs?|balls?|fizz)'
+    count_near_bomb: '(?P<n>\d+)\s*[-\s]?(?P<unit>pack|count|pcs|pieces|bombs?|balls?|fizz(?:y|ies|ers?)?|blasters?)'
+  pattern_priority:
+    set_of: 0
+    n_x_bombs: 1
+    near_bombs: 2
+    near_bomb: 2
+    near_balls: 2
+    near_ball: 2
+    near_fizzies: 2
+    near_fizzy: 2
+    near_fizzers: 2
+    near_blasters: 2
+    near_blaster: 2
+    pack_of: 3
+    near_pack: 4
+    near_count: 5
+    near_pcs: 5
+    near_pieces: 5
+    n_count: 6
+  # First signal that yields a value > 1 wins.
+  resolution_order:
+    - text                     # best count across the text channels (title>bullets>size>description)
+    - number_of_items          # Amazon "Number of Items"
+    - keepa_number_of_items    # Keepa numberOfItems
+    - keepa_package_quantity   # Keepa packageQuantity
+    - label_unit_num           # scrape label "N count"
+  confidence:
+    text_title: high
+    text_bullets: high
+    text_size: medium
+    text_description: medium
+    number_of_items: medium
+    keepa_number_of_items: medium
+    keepa_package_quantity: medium
+    label_unit_num: medium
+    single_default: medium     # a signal explicitly says "1"
+    assumed_single: low        # pure item with no count wording -> assume 1
+  default_single: 1
+
+# ----------------------------------------------------------------------------
+# 4) Manual review / labeling
+# ----------------------------------------------------------------------------
+labeling:
+  sample_size: 300
+  seed: 42
+  class_labels: [pure, craft_kit, bundle, substitute, toiletry, unclassified]
+  count_labels: [multi_pack, single, pack_as_one, extreme_count, count_unable, "n/a"]

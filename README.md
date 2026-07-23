@@ -1,134 +1,11 @@
 # Count Bath Bombs
 
-For each Amazon listing, decide whether it is a **pure finished bath-bomb
-product** and, if so, count how many **single bomb units** it contains
-(`n_bomb_balls`). Rules-only (title/text + catalog + Keepa), with a human
-review/label loop for building and checking a manual-label set.
+For each Amazon bath-bomb listing, decide whether it is a **countable bath bomb**
+and, if so, **how many single units** it contains (`n_bomb_balls`). Rules-first,
+fully config-driven, with a manual review UI.
 
-## Pipelines at a glance
-
-Two pipelines: one **produces counts**, one lets humans **review & check** them.
-
-### 1. Counting pipeline — `scripts/run_pipeline.py` → `count_bath_bombs/pipeline.py`
-
-Runs over all ~25k listings in stages, each adding columns to the frame:
-
-| Stage | Module | What it does |
-|-------|--------|--------------|
-| Load | `pipeline.load_products` | Read the input CSV, keep the relevant columns |
-| Keepa (2nd source) | `keepa.py` | Join the Keepa product export on `asin` → `keepa_*` fields (numberOfItems, packageQuantity, features, description, images, variations). Used as a **fallback / second signal** for counts and purity. Toggle with `keepa.enabled`; degrades to null columns if the source is unavailable |
-| Classify + count | `purity.py` + `counting.py` | One row-wise pass: **Purity** — regex rules on the **title** (strict mode) → `is_pure_bath_bomb` ∈ {True, False} + `exclude_reason` via a six-detector ladder (craft_kit / bundle / substitute / toiletry / unclassified); then **Candidates** — extract every possible count from title/size/bullets/description + catalog fields; then **Resolve** — for **pure** items only, pick `n_bomb_balls` via a priority ladder, set `count_confidence` / `count_source` (`pipeline.classify_and_count`) |
-
-Outputs `output/product_counts.csv` (and an optional stratified
-`labeling_sample.csv`).
-
-### 2. Review pipeline — `label_ui.py` · `eval_gold.py`
-
-Single reviewer: label in the Streamlit console → one row per ASIN lands in
-`manual_labels.csv` (latest label per ASIN wins) → `eval_gold.py` compares the
-rule predictions against those manual labels. No multi-annotator adjudication,
-no train/eval split, no model seeding.
-
-## Counting SOP (annotated with live volumes)
-
-The decision procedure, with each rule's share of the current **25,357-listing**
-run. Purity branches are % of all listings; count branches are % of the **11,645
-pure** products. First matching rule wins at every stage.
-
-### Stage 1 — Purity: is this a countable bath bomb? (`purity.py`)
-
-Judged from the **title** in strict mode. A mutually-exclusive detector ladder;
-first match wins. Every listing ends up either **pure** or **excluded** (with a
-reason) — there is no null/undecided state.
-
-```mermaid
-flowchart TD
-  T["Title (strict mode)"] --> K{"CRAFT_KIT?<br/>make your own / DIY / craft kit / making kit / mould"}
-  K -->|"yes · 364 (1.4%)"| EK["EXCLUDE: craft_kit"]
-  K -->|no| B{"BUNDLE?<br/>bomb phrase AND (soap/candle/lotion/…/toy/<br/>necklace/ring, or surprise+inside)"}
-  B -->|"yes · 3,474 (13.7%)"| EB["EXCLUDE: bundle"]
-  B -->|no| SUB{"SUBSTITUTE / INGREDIENT first?<br/>shower steamer/melt/tablet/salt/powder/beads,<br/>citric acid, baking soda — wins if before any bomb word"}
-  SUB -->|"yes"| ESU["EXCLUDE: substitute (2,482) / toiletry"]
-  SUB -->|no| TL{"TOILETRY? (no bomb phrase)<br/>soap/shampoo/lotion/candle/body wash/…<br/>bath ball / cauldron"}
-  TL -->|"yes"| ETL["EXCLUDE: toiletry (629 incl. ingredient)"]
-  TL -->|no| P{"Bomb phrase present?"}
-  P -->|"yes · 11,645 (45.9%)"| PURE["PURE — count it"]
-  P -->|"no · 6,763 (26.7%)"| U["EXCLUDE: unclassified"]
-```
-
-| `exclude_reason` | `purity_source` | Fired | Share |
-|---|---|---|---|
-| — (PURE) | `rule_positive` | 11,645 | 45.9% |
-| `unclassified` | `rule_unclassified` | 6,763 | 26.7% |
-| `bundle` | `rule_bundle` | 3,474 | 13.7% |
-| `substitute` | `rule_substitute` | 2,482 | 9.8% |
-| `toiletry` | `rule_toiletry` + `rule_ingredient` | 629 | 2.5% |
-| `craft_kit` | `rule_craft_kit` | 364 | 1.4% |
-
-**Gating modes:**
-- **CRAFT_KIT** excludes only genuine DIY markers — "Bath Bomb **Kit**" (a finished gift set) stays PURE.
-- **BUNDLE** requires a bomb phrase **and** a non-bomb companion (`soap` [guarded against "Soap Co"/"soap-free"], candle, lotion, shampoo, body wash, …) or hidden item (necklace/ring/toy, or surprise+inside) — a bath bomb sold *with* something else.
-- **SUBSTITUTE** (shower steamer/melt/tablet/disc/fizz, bath salt/powder/beads/melt, fizz tablet, bubble bath) and **INGREDIENT** (citric acid, baking soda → reported as `toiletry`) use **first-word adjudication**: they exclude only if the term appears *before* any bomb phrase ("Bath Bomb & Shower Steamer" → PURE; "Shower Steamer, Bath Bomb Sampler" → substitute). Substitute sub-families are gated by `scope.include_*`.
-- **TOILETRY** excludes only when there is no bomb phrase. `bath ball` / `cauldron` are toiletry-only words: a lone "Bath Ball" is toiletry, but "Magic Bath Balls … Bath Bombs" / "Cauldron Bath Bomb" stay PURE.
-- **UNCLASSIFIED** — no bomb phrase and no other signal; excluded, flagged for review.
-
-### Stage 2 — Detect candidate numbers (`counting.py`)
-
-Five regexes scan four **text channels** separately; each keeps **one** number —
-lowest-priority pattern, preferring values >1:
-
-| Channel | Fields concatenated |
-|---|---|
-| title | `title` |
-| size | `size` |
-| bullets | `feature` + `keepa_features` |
-| description | `product_description` + `keepa_description` |
-
-| Priority | Pattern | Example |
-|---|---|---|
-| 0 | `set_of` | "Set of 6" |
-| 1 | `n_x_bombs` | "6 x 5oz bombs" |
-| 2 | `near_bomb/ball/fizz/blaster` | "12 bath bombs" |
-| 3 | `pack_of` | "Pack of 8" |
-| 4 | `near_pack` | "4 pack" |
-| 5 | `near_pcs/pieces/count` | "24 pcs" |
-
-Catalog integers are read as-is (>0): `number_of_items`, Keepa `numberOfItems` /
-`packageQuantity`, plus `unit_num` (when `unit_text`∈{count,each,unit}) and
-`label_unit_num` (when `label_unit` mentions "count").
-
-> ⚠️ The high-volume patterns (`near_pack`, `near_pcs`, `near_count`) are the
-> **weakest/most generic** — they match any number next to "pack/pcs/count",
-> which is where scent-count and size false positives creep in.
-
-### Stage 3 — Choose the number (`counting.py`)
-
-**Only pure products are counted.** A precedence ladder; first tier with a value
->1 wins. Shares are of the **11,645 pure** products.
-
-```mermaid
-flowchart TD
-  S["Pure product"] --> L1{"Text multi-count?<br/>title &gt; bullets &gt; size &gt; description"}
-  L1 -->|"yes · 35.7% · high/medium"| C1["use it"]
-  L1 -->|no| L2{"number_of_items &gt; 1?"}
-  L2 -->|"yes · medium"| C2["use it"]
-  L2 -->|no| L2b{"keepa numberOfItems / packageQuantity &gt; 1?"}
-  L2b -->|"yes · 9.2% · medium"| C2b["use it (keepa_number_of_items)"]
-  L2b -->|no| L3{"label_unit_num &gt; 1?"}
-  L3 -->|"yes · 2.0% · medium"| C3["use it"]
-  L3 -->|no| L4{"any signal == 1?"}
-  L4 -->|"yes · 26.7% · med/low"| C4["n = 1 (single_default)"]
-  L4 -->|"no · 24.2% · low"| C5["n = 1 (assumed_single) ⚠"]
-```
-
-Flags set alongside the number:
-- **`seller_counts_pack_as_one`** — text says a multi-count but a catalog field says 1. Recorded only; **does not change the count**.
-- **`count_unable`** — no number could be justified. Currently always `False` (the `assumed_single` fallback always yields 1), kept for schema stability.
-
-**Where the volume goes** (of 11,645 pure): explicit **text count 35.7%** (title
-29.3% · bullets/desc/size 6.4%), **catalog 13.5%** (keepa 9.2% · number_of_items
-2.2% · label_unit_num 2.0%), **single_default 26.7%**, **assumed_single 24.2%**.
-Confidence: low 44.1% · high 32.5% · medium 23.3%.
+Everything tunable — data paths, word lists, count patterns, priorities — lives
+in **`config.yml`** (repo root). Nothing is hardcoded in the Python.
 
 ## Setup
 
@@ -137,77 +14,82 @@ python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
 
-## Recommended workflow
+## Pipelines
 
 ```bash
-# 1) Rules over the product CSV + Keepa. Counts every pure bath bomb.
-.venv/bin/python scripts/run_pipeline.py --labeling-sample
+# 1-3) Read + consolidate data → purify → count. Writes output/product_counts.csv
+.venv/bin/python code/run_pipeline.py --labeling-sample
 
-# 2) Review + label in the browser (thumbnail, evidence, optional Amazon-page view)
-.venv/bin/streamlit run scripts/label_ui.py
-
-# 3) Compare the rules against the manual labels
-.venv/bin/python scripts/eval_gold.py                      # headline metrics
-.venv/bin/python scripts/eval_gold.py --report             # full report: confusion, F1, by-confidence/class, errors
-.venv/bin/python scripts/eval_gold.py --report --out output/manual_metrics.json
+# 4) Manual review / label UI (writes data/gold/manual_labels.csv)
+.venv/bin/streamlit run code/label_ui.py
 ```
 
-## Manual labeling
+### 1. Data (`data.py`)
+Loads the **Amazon scrape** (primary) and the **Keepa export** (second source)
+from the folders in `config.paths`, joins them on `asin` (Keepa fields under a
+`keepa_` prefix), and keeps the configured columns.
 
-- `data/gold/manual_labels.csv` — **one row per ASIN**; saving in the console
-  upserts by ASIN, so the **latest label wins**. Single reviewer, no adjudication.
-- The Streamlit **Review** tab shows the rule prediction + evidence and lets you
-  confirm/correct it (`is_pure_bath_bomb`, `n_bomb_balls`, `exclude_reason`). Two
-  independent sidebar filters: **Classification** (pure / craft_kit / bundle /
-  substitute / toiletry / unclassified) and **Counting** (multi_pack / single /
-  pack_as_one / extreme_count).
-- The **Dashboard** tab shows progress and a plain manual-labels-vs-rule comparison.
+### 2. Purification (`purity.py`)
+Classifies each title against config word lists (`purity.lexicon`). Ladder,
+first match wins:
+
+```
+craft_kit → bundle → substitute → ingredient → toiletry → pure → unclassified
+```
+
+A `bomb_positive` phrase rescues a title from substitute/ingredient/toiletry
+(but not craft_kit or bundle). Only `pure` listings are counted; every other
+class is an `exclude_reason`.
+
+### 3. Counting (`counting.py`)
+For pure listings, scans the text channels for count phrases (`counting.patterns`,
+tie-broken by `pattern_priority`), then walks `resolution_order` — the first
+signal yielding a value > 1 wins:
+
+```
+text (title>bullets>size>description) → number_of_items
+  → keepa_number_of_items → keepa_package_quantity → label_unit_num
+```
+
+No count evidence → assume a single unit (low confidence). Outputs
+`n_bomb_balls`, `count_source`, `count_confidence`.
+
+### 4. Review UI (`scripts/label_ui.py`, `labeling.py`)
+Streamlit console to check/correct predictions: product image, evidence and
+candidate-count panels, optional scraped-page render, and a label form. Labels
+save to `data/gold/manual_labels.csv` (one row per ASIN, latest wins). A
+stratified `labeling_sample.csv` (`--labeling-sample`) seeds the queue.
+
+## Config map (`config.yml`)
+
+| Section | Controls |
+|---------|----------|
+| `paths` | Amazon / Keepa / HTML folders, output + label CSVs |
+| `amazon_columns`, `keepa` | Which source columns to keep / join |
+| `scope` | Whether shower bombs / steamers / melts / tablets count |
+| `purity.lexicon` | Every word set per exclusion class |
+| `counting.patterns` / `pattern_priority` | Count regexes + tie-break priority |
+| `counting.resolution_order` / `confidence` | Which signal wins, and its confidence |
+| `labeling` | Sample size / seed, class + count label vocabularies |
+
+## Layout
+
+```
+config.yml                  # single source of truth
+code/
+  data.py                   # 1) read + consolidate
+  purity.py                 # 2) purification
+  counting.py               # 3) counting
+  labeling.py               # 4) label store + taxonomy + sampling
+  pipeline.py               # orchestration
+  run_pipeline.py           # CLI
+  label_ui.py               # review UI
+output/product_counts.csv   # predictions
+data/gold/manual_labels.csv # manual labels
+```
 
 ## Results (current run)
 
-Counting pipeline over **25,357 listings** (rules over product CSV + Keepa):
-
-| Metric | Value |
-|--------|-------|
-| Pure bath bombs (counted) | **11,645** (45.9%) |
-| Excluded | 13,712 — unclassified 6,763 · bundle 3,474 · substitute 2,482 · toiletry 629 · craft_kit 364 |
-| Count confidence (of pure) | low 5,140 · high 3,788 · medium 2,717 |
-
-> Purity is deliberately strict: shower steamers/salts/tablets/melts
-> (`substitute`), bath-bomb-plus-item sets (`bundle`), raw ingredients like citric
-> acid (`toiletry`), and titles with no bomb phrase (`unclassified`) are all
-> excluded. Grow the manual-label set via the Review console, then
-> `eval_gold.py --report` to measure accuracy — the small existing set predates
-> the current rules.
-
-## Config knobs
-
-| Key | Default | Meaning |
-|-----|---------|---------|
-| `purity.strict` | `true` | Title-primary detection (fewer false excludes from feature text) |
-| `scope.include_shower_bombs` | `true` | Count shower bombs |
-| `scope.include_shower_steamers` | `false` | Exclude shower steamers/melts/tablets (→ substitute) |
-| `scope.include_bath_melts` / `include_fizz_tablets` | `false` | Out of scope (→ substitute) |
-| `keepa.enabled` | `true` | Join the Keepa export (`paths.keepa_csv`) as a second source. Off → null `keepa_*` columns |
-
-### Two-source comparison (Keepa vs amazon_web_scraping)
-
-Both sources cover the same **25,357 ASINs (perfect 1:1 join)** and are
-complementary, so Keepa is wired as a fallback rather than a replacement:
-
-| Field | amazon_web_scraping | Keepa | Wiring |
-|---|---|---|---|
-| `number_of_items` | 2,493 present | **12,714 present** (99.8% agree where both) | Keepa fills the count ladder (`keepa_number_of_items` counts ~9% of pure) |
-| images | `image_num` count only | **imagesCSV URLs, all rows** (97% non-empty) | `keepa_main_image_url` / `keepa_image_count`; UI thumbnail fallback |
-| variations | 2,627 | **all rows** (`variationCSV`) | `keepa_variation_count` |
-| features | 62% non-empty | **75% non-empty** | added to bullets text for count regexes |
-| description | **93% non-empty** | 51% | scrape stays primary; Keepa fallback |
-| title | — | 59% exact match (different snapshot) | Keepa title only as last-resort fallback |
-
-## Outputs
-
-| Path | Role |
-|------|------|
-| `output/product_counts.csv` | Predictions (`is_pure_bath_bomb`, `exclude_reason`, `n_bomb_balls`, `count_confidence`, `count_source`, `keepa_*`, …) |
-| `output/labeling_sample.csv` | Stratified review sheet (`class_label` / `count_label` per row) |
-| `data/gold/manual_labels.csv` | Manual labels, one row per ASIN (latest wins) |
+25,357 listings → **11,645 pure** · excluded 13,712 (unclassified 6,763 ·
+bundle 3,474 · substitute 2,482 · toiletry 629 · craft_kit 364). Keepa matched
+100% of ASINs.

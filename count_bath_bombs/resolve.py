@@ -63,7 +63,7 @@ def _cand_count_guess(row: pd.Series) -> tuple[int | None, str | None, str]:
 
 
 def resolve_row(row: pd.Series) -> dict[str, Any]:
-    """Assign n_bomb_balls whenever a number can be justified (rules only)."""
+    """Count only pure bath bombs; every other listing is excluded (no count)."""
     is_pure = row.get("is_pure_bath_bomb")
     title_n = row.get("cand_title")
     noi = row.get("cand_number_of_items")
@@ -85,8 +85,8 @@ def resolve_row(row: pd.Series) -> dict[str, Any]:
     ]
     seller_pack_as_one = bool(text_multi and catalog_ones)
 
-    # Excluded products: no unit count
-    if is_pure is False:
+    # Only pure bath bombs get a unit count; everything else is excluded.
+    if is_pure is not True:
         return {
             "n_bomb_balls": None,
             "count_confidence": "n/a",
@@ -96,26 +96,6 @@ def resolve_row(row: pd.Series) -> dict[str, Any]:
         }
 
     n, source, conf = _cand_count_guess(row)
-
-    # Undecided purity → keep a provisional count if evidence exists.
-    if is_pure is None or (isinstance(is_pure, float) and pd.isna(is_pure)):
-        if source == "assumed_single":
-            return {
-                "n_bomb_balls": None,
-                "count_confidence": "low",
-                "count_source": None,
-                "seller_counts_pack_as_one": seller_pack_as_one,
-                "count_unable": True,
-            }
-        return {
-            "n_bomb_balls": int(n) if n is not None else None,
-            "count_confidence": "low",
-            "count_source": f"provisional:{source}",
-            "seller_counts_pack_as_one": seller_pack_as_one,
-            "count_unable": n is None,
-        }
-
-    # Pure product — keep a number when possible.
     return {
         "n_bomb_balls": int(n) if n is not None else None,
         "count_confidence": conf,

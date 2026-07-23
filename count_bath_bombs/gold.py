@@ -8,7 +8,6 @@ import pandas as pd
 GOLD_COLUMNS = [
     "asin",
     "stratum",
-    "split",
     "is_pure_bath_bomb_gold",
     "n_bomb_balls_gold",
     "exclude_reason_gold",
@@ -16,24 +15,38 @@ GOLD_COLUMNS = [
     "annotator",
 ]
 
+# The two independent labelling dimensions the review UI filters on.
+CLASS_LABELS = ["pure", "craft_kit", "bundle", "substitute", "toiletry", "unclassified"]
+COUNT_LABELS = ["multi_pack", "single", "pack_as_one", "extreme_count", "count_unable", "n/a"]
 
-def _stratum_for_row(row: pd.Series) -> str:
-    # Exclusion reasons map straight to strata (craft_kit / bundle / substitute / toiletry).
+
+def class_label_for_row(row: pd.Series) -> str:
+    """Classification outcome: pure / <exclude_reason> / unclassified."""
+    is_pure = row.get("is_pure_bath_bomb")
+    if is_pure is True:
+        return "pure"
     reason = row.get("exclude_reason")
-    if row.get("is_pure_bath_bomb") is False and isinstance(reason, str) and reason:
+    if is_pure is False and isinstance(reason, str) and reason:
         return reason
-    noi = row.get("number_of_items")
-    title_n = row.get("cand_title")
-    if (noi == 1 or noi == 1.0) and title_n is not None and title_n > 1:
+    return "unclassified"
+
+
+def count_label_for_row(row: pd.Series) -> str:
+    """Counting bucket — only meaningful for pure items (else 'n/a')."""
+    if row.get("is_pure_bath_bomb") is not True:
+        return "n/a"
+    if bool(row.get("count_unable")):
+        return "count_unable"
+    n = row.get("n_bomb_balls")
+    if bool(row.get("seller_counts_pack_as_one")):
         return "pack_as_one"
-    if title_n is not None and title_n > 1:
-        return "multi_pack"
-    if row.get("n_bomb_balls") == 1:
-        return "single"
-    extreme = row.get("number_of_items")
-    if extreme is not None and not pd.isna(extreme) and float(extreme) >= 50:
+    if n is not None and not pd.isna(n) and float(n) >= 50:
         return "extreme_count"
-    return "other"
+    if n is not None and not pd.isna(n) and float(n) > 1:
+        return "multi_pack"
+    if n == 1 or n == 1.0:
+        return "single"
+    return "count_unable"
 
 
 def build_labeling_sample(
@@ -42,14 +55,18 @@ def build_labeling_sample(
     seed: int = 42,
 ) -> pd.DataFrame:
     work = df.copy()
-    work["stratum"] = [_stratum_for_row(r) for _, r in work.iterrows()]
+    work["class_label"] = [class_label_for_row(r) for _, r in work.iterrows()]
+    work["count_label"] = [count_label_for_row(r) for _, r in work.iterrows()]
+    # `stratum` kept for backwards-compat display = classification bucket.
+    work["stratum"] = work["class_label"]
 
-    strata = work["stratum"].unique().tolist()
+    # Stratify across classification labels for balanced coverage.
+    strata = work["class_label"].unique().tolist()
     per = max(1, sample_size // max(len(strata), 1))
     rng = np.random.default_rng(seed)
     parts = []
     for s in strata:
-        block = work[work["stratum"] == s]
+        block = work[work["class_label"] == s]
         n = min(len(block), per)
         if n == 0:
             continue
@@ -69,6 +86,8 @@ def build_labeling_sample(
         [
             "asin",
             "stratum",
+            "class_label",
+            "count_label",
             "title",
             "number_of_items",
             "size",

@@ -59,12 +59,3 @@ keepa:
 labeling:
   sample_size: 300
   seed: 42
-
-# Gold / annotation settings.
-#   eval_frac: fraction of ASINs held out (deterministic, hash-based) as the
-#     clean evaluation slice. This slice is NEVER seeded from model predictions,
-#     so the model is never scored on labels it produced itself.
-#   seed_confidence: model confidence levels eligible for --seed bulk labeling.
-gold:
-  eval_frac: 0.2
-  seed_confidence: [high]

@@ -11,48 +11,51 @@ import pandas as pd
 # Detection runs on the TITLE in strict mode (default); lenient mode also scans
 # the support text (bullets/description). The ladder in classify_purity():
 #
-#   1. CRAFT_KIT    kit/DIY/mould/baking soda/…          → exclude "craft_kit"
-#   2. BUNDLE       BOMB ∧ (TOILETRY∪HIDDEN ∨ surprise∧inside) → exclude "bundle"
-#   3a SUBSTITUTE   steamer/salt/melt/tablet/…           → exclude "substitute"  (first-word adj vs bomb)
-#   3b TOILETRY     soap/shampoo/lotion/…                → exclude "toiletry"    (word present ⇒ exclude)
-#   4. PURE         bath bomb / bath fizzy / …           → is_pure=True
-#   5. UNCLASSIFIED everything else                      → is_pure=None, needs_review=True
+#   1. CRAFT_KIT   DIY / make-your-own / mould               → exclude "craft_kit"
+#   2. BUNDLE      BOMB ∧ (companion∪hidden ∨ surprise∧inside) → exclude "bundle"
+#   3. SUBSTITUTE  steamer/salt/melt/tablet/…                 → exclude "substitute"  (first-word adj)
+#   4. INGREDIENT  citric acid / baking soda                 → exclude "toiletry"    (first-word adj)
+#   5. TOILETRY    soap/shampoo/lotion/…  (no bomb phrase)    → exclude "toiletry"
+#   6. PURE        bath bomb / bath fizzy / …                → is_pure=True
+#   7. UNCLASSIFIED everything else                          → exclude "unclassified" (is_pure=False)
 #
-# SUBSTITUTE and TOILETRY lexicons are mutually exclusive (no word in both).
+# Notes:
+#  - "Bath Bomb Kit" is a finished gift set, NOT a craft kit — only real DIY
+#    markers (make your own / DIY / craft kit / making kit / mould) exclude.
+#  - soap is a normal companion word (guarded against "Soap Co" / "soap-free" /
+#    "soapberry"), so soap + a bomb phrase → bundle.
+#  - INGREDIENT and SUBSTITUTE use first-word adjudication: the term excludes
+#    only if it appears before any bomb phrase in the title.
 # --------------------------------------------------------------------------- #
 
-# 1. Craft kits / DIY — not a finished product.
+# 1. Craft kits / DIY — supplies to *make* bombs, not finished bombs.
 CRAFT_KIT_PATTERNS = [
     r"\bcraft kit\b",
     r"\bdiy\b",
     r"\bmake your own\b",
     r"\bmake[- ]your[- ]own\b",
-    r"\bstarter kit\b",
-    r"\bbath bomb kit\b",
-    r"\bbath fizzie kit\b",
+    r"\bmaking kit\b",
     r"\bmoulds?\b",
     r"\bmolds?\b",
     r"\bbook\s*&\s*kit\b",
-    r"\bbaking soda\b",
-    r"\bcitric acid\b",
 ]
 
-# 4. Positive: a countable, molded bath-bomb unit. "bath fizz*" counts as a bomb.
+# 6. Positive: a countable, molded bath-bomb unit. "bath fizz*" counts as a bomb.
 BOMB_POSITIVE = [
     r"\bbath bombs?\b",
     r"\bbath fizz(?:y|ies|er|ers)?\b",
-    r"\bbath balls?\b",
     r"\bbath bursts?\b",
     r"\bbath blasters?\b",
     r"\bshower bombs?\b",
     r"\baromabombs?\b",
 ]
 
-# 3b. TOILETRY: accompanying products. With a bomb phrase these become BUNDLE
-# (step 2); reaching step 3b implies no bomb phrase, so presence ⇒ exclude.
-# Guarded soap: match soap(s) but not soap-free / soapberry-nut-wort / "Soap Co".
+# Guarded soap: match soap(s) but not soap-free / soapberry-nut-wort / "Soap (&) Co".
 _SOAP = r"\bsoaps?\b(?!\s*-?\s*free)(?!\s*&?\s*co(?:mpany|\.)?\b)"
-TOILETRY_PATTERNS = [
+
+# Companions bundled *with* a bath bomb. Soap is a normal companion (guarded so
+# brand/ingredient uses like "Soap Co" / "soap-free" don't fire).
+COMPANION_PATTERNS = [
     _SOAP,
     r"\bcandles?\b",
     r"\blotions?\b",
@@ -68,12 +71,21 @@ TOILETRY_PATTERNS = [
     r"\bpedicure\b",
 ]
 
+# Toiletry-only words: exclude a *standalone* product (no bomb phrase) but do NOT
+# trigger a bundle — "Cauldron Bath Bomb" / "Magic Bath Balls … Bath Bombs" stay
+# PURE, while a lone "Bath Ball" / "Witch Cauldron" is a toiletry.
+TOILETRY_ONLY_PATTERNS = [
+    r"\bbath balls?\b",
+    r"\bcauldrons?\b",
+]
+
 # 2. BUNDLE hidden items + surprise context.
 HIDDEN_ITEM_PATTERNS = [r"\bnecklaces?\b", r"\brings?\b", r"\btoys?\b"]
 
-# 3a. SUBSTITUTE: product forms used instead of a bath bomb.
-#   - "always" families are excluded regardless of scope.
-#   - scope-gated families are excluded only when their include_* flag is False.
+# 4. INGREDIENT: raw materials ("Citric Acid ... for Bath Bombs") — reported as toiletry.
+INGREDIENT_PATTERNS = [r"\bcitric acid\b", r"\bbaking soda\b"]
+
+# 3. SUBSTITUTE: product forms used instead of a bath bomb.
 SUBSTITUTE_ALWAYS = [
     r"\bbath salts?\b",
     r"\bbath powder\b",
@@ -91,8 +103,11 @@ def _compile(patterns: list[str]) -> re.Pattern[str]:
 
 CRAFT_KIT_RE = _compile(CRAFT_KIT_PATTERNS)
 BOMB_POS_RE = _compile(BOMB_POSITIVE)
-TOILETRY_RE = _compile(TOILETRY_PATTERNS)
-HIDDEN_ITEM_RE = _compile(HIDDEN_ITEM_PATTERNS)
+# Bundle triggers = companions (incl. soap) + hidden items (NOT toiletry-only words).
+BUNDLE_ITEM_RE = _compile(COMPANION_PATTERNS + HIDDEN_ITEM_PATTERNS)
+# Toiletry (no-bomb exclusion) = companions + toiletry-only words.
+TOILETRY_RE = _compile(COMPANION_PATTERNS + TOILETRY_ONLY_PATTERNS)
+INGREDIENT_RE = _compile(INGREDIENT_PATTERNS)
 SURPRISE_RE = re.compile(r"\bsurprise\b", re.IGNORECASE)
 INSIDE_RE = re.compile(r"\b(?:inside|hidden)\b", re.IGNORECASE)
 
@@ -146,35 +161,38 @@ def classify_purity(row: pd.Series, scope: dict, purity_cfg: dict | None = None)
     bomb = BOMB_POS_RE.search(text)
     bomb_pos = bomb.start() if bomb else None
 
-    # 1. Craft kit — unconditional.
+    # 1. Craft kit — supplies to make bombs (unconditional).
     if CRAFT_KIT_RE.search(text):
         return PurityResult(False, "craft_kit", False, "rule_craft_kit")
 
     # 2. Bundle — a bath bomb sold together with a non-bomb item.
     if bomb_pos is not None:
-        has_item = (
-            TOILETRY_RE.search(text)
-            or HIDDEN_ITEM_RE.search(text)
-            or (SURPRISE_RE.search(text) and INSIDE_RE.search(text))
+        has_item = BUNDLE_ITEM_RE.search(text) or (
+            SURPRISE_RE.search(text) and INSIDE_RE.search(text)
         )
         if has_item:
             return PurityResult(False, "bundle", False, "rule_bundle")
 
-    # 3a. Substitute — first-word adjudication vs a bomb phrase.
+    # 3. Substitute — first-word adjudication vs a bomb phrase.
     sub = _substitute_re(scope).search(text)
     if sub is not None and (bomb_pos is None or sub.start() < bomb_pos):
         return PurityResult(False, "substitute", False, "rule_substitute")
 
-    # 3b. Toiletry — reaches here only without a bomb phrase, so presence ⇒ exclude.
-    if TOILETRY_RE.search(text):
+    # 4. Ingredient — raw citric acid / baking soda; first-word adjudication → toiletry.
+    ing = INGREDIENT_RE.search(text)
+    if ing is not None and (bomb_pos is None or ing.start() < bomb_pos):
+        return PurityResult(False, "toiletry", False, "rule_ingredient")
+
+    # 5. Toiletry — soap/shampoo/lotion/… with no bomb phrase (soap + bomb → PURE).
+    if bomb_pos is None and TOILETRY_RE.search(text):
         return PurityResult(False, "toiletry", False, "rule_toiletry")
 
-    # 4. Pure bath bomb.
+    # 6. Pure bath bomb.
     if bomb_pos is not None:
         return PurityResult(True, None, False, "rule_positive")
 
-    # 5. Unclassified — route to review.
-    return PurityResult(None, "unclassified", True, "rule_unclassified")
+    # 7. Unclassified — no bomb phrase and no other signal; excluded, flag for review.
+    return PurityResult(False, "unclassified", True, "rule_unclassified")
 
 
 def apply_purity(

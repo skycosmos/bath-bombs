@@ -1,10 +1,10 @@
 """
 Streamlit review + labeling console for bath-bomb unit counts.
 
-Human agents review each listing's evidence (title, catalog fields, extracted
-candidate counts, bullets, description), then confirm or correct the model's
-prediction. Labels are written to data/gold/gold_labels.csv (schema = GOLD_COLUMNS)
-and consumed by scripts/eval_gold.py.
+Human reviewers look at each listing's evidence (title, catalog fields,
+extracted candidate counts, bullets, description), then confirm or correct the
+rule prediction. Labels are written to data/gold/gold_labels.csv and consumed
+by scripts/eval_gold.py.
 
 Launch:
   .venv/bin/streamlit run scripts/label_ui.py
@@ -26,12 +26,18 @@ if str(ROOT) not in sys.path:
 
 from count_bath_bombs import annotations as A
 from count_bath_bombs.config import load_config
+from count_bath_bombs.gold import (
+    CLASS_LABELS,
+    COUNT_LABELS,
+    class_label_for_row,
+    count_label_for_row,
+)
 from count_bath_bombs.html_extract import extract_from_html
 
 st.set_page_config(page_title="Bath Bomb Review Console", layout="wide")
 
 PURE_OPTIONS = ["true", "false", "unsure"]
-EXCLUDE_OPTIONS = ["", "kit", "mixed_set", "not_bath_bomb", "unclear"]
+EXCLUDE_OPTIONS = ["", "craft_kit", "bundle", "substitute", "toiletry", "unclassified"]
 AMAZON_URL = "https://www.amazon.com/dp/{asin}"
 
 
@@ -48,6 +54,15 @@ def _read(path: Path) -> pd.DataFrame | None:
     if not path.exists() or path.stat().st_size == 0:
         return None
     return _read_csv(str(path), path.stat().st_mtime)
+
+
+def _ensure_labels(df: pd.DataFrame) -> pd.DataFrame:
+    """Guarantee class_label / count_label columns for filtering + badges."""
+    if "class_label" not in df.columns and "is_pure_bath_bomb" in df.columns:
+        df = df.copy()
+        df["class_label"] = [class_label_for_row(r) for _, r in df.iterrows()]
+        df["count_label"] = [count_label_for_row(r) for _, r in df.iterrows()]
+    return df
 
 
 def _load_queue(cfg: dict) -> tuple[pd.DataFrame, str]:
@@ -77,7 +92,7 @@ def _load_queue(cfg: dict) -> tuple[pd.DataFrame, str]:
         extra = [c for c in full.columns if c not in queue.columns]
         if extra:
             queue = queue.merge(full[["asin"] + extra], on="asin", how="left")
-    return queue, source
+    return _ensure_labels(queue), source
 
 
 @st.cache_data(show_spinner=False, max_entries=8)
@@ -248,17 +263,14 @@ def _persist_annotation(
     annotations_path: str | Path,
     gold_path: str | Path,
     record: dict,
-    eval_frac: float,
 ) -> None:
-    """Write one human annotation, then re-derive the human-only gold file."""
+    """Write one human annotation, then re-derive the gold file."""
     record = dict(record)
-    record["source"] = "human"
-    record["split"] = A.assign_split(record["asin"], eval_frac)
     record["ts"] = A.now_ts()
     annots = A.load_annotations(annotations_path)
     annots = A.upsert_annotation(annots, record)
     A.save_annotations(annotations_path, annots)
-    A.rebuild_gold(annotations_path, gold_path, humans_only=True)
+    A.rebuild_gold(annotations_path, gold_path)
 
 
 # --------------------------------------------------------------------------- #
@@ -304,7 +316,7 @@ def _highlight_count(title: str, row: pd.Series) -> str:
 # Panels
 # --------------------------------------------------------------------------- #
 def _evidence_panel(row: pd.Series) -> None:
-    st.markdown("#### 🔍 Model prediction")
+    st.markdown("#### 🔍 Rule prediction")
     pred = _as_pure_str(row.get("is_pure_bath_bomb"))
     n_pred = _as_int(row.get("n_bomb_balls"))
     c1, c2, c3 = st.columns(3)
@@ -381,58 +393,40 @@ def _text_panel(row: pd.Series) -> None:
 # --------------------------------------------------------------------------- #
 # Review tab
 # --------------------------------------------------------------------------- #
-def _apply_filters(
-    queue: pd.DataFrame,
-    source: str,
-    my_asins: set,
-    human_counts: dict,
-    eval_frac: float,
-) -> pd.DataFrame:
+def _apply_filters(queue: pd.DataFrame, my_asins: set) -> pd.DataFrame:
     st.sidebar.markdown("### Filters")
     hide_mine = st.sidebar.checkbox("Hide ASINs I've already labeled", value=True)
-    needs_2nd = st.sidebar.checkbox(
-        "Only eval rows needing a 2nd label",
-        value=False,
-        help="Held-out (eval) ASINs with exactly one human label, not yours — "
-        "label these to build inter-annotator agreement.",
+
+    st.sidebar.markdown("**Classification**")
+    class_vals = [c for c in CLASS_LABELS if c in set(queue.get("class_label", pd.Series()).dropna())]
+    pick_class = st.sidebar.multiselect(
+        "Classification label", class_vals, default=[],
+        help="pure / craft_kit / bundle / substitute / toiletry / unclassified",
     )
-    pick_split = st.sidebar.multiselect(
-        "Split", ["eval", "train"], default=[],
-        help="eval = held-out clean slice (never model-seeded)",
+
+    st.sidebar.markdown("**Counting**")
+    count_vals = [c for c in COUNT_LABELS if c in set(queue.get("count_label", pd.Series()).dropna())]
+    pick_count = st.sidebar.multiselect(
+        "Count label", count_vals, default=[],
+        help="multi_pack / single / pack_as_one / extreme_count / count_unable (pure items only)",
     )
-    only_unable = st.sidebar.checkbox(
-        "Only count_unable rows",
-        value=False,
-        help="Rows the rules could not assign a count to",
-    )
-    strata = sorted(queue["stratum"].dropna().unique().tolist()) if "stratum" in queue else []
-    pick_strata = st.sidebar.multiselect("Stratum", strata, default=[]) if strata else []
     conf_vals = (
         sorted(queue["count_confidence"].dropna().unique().tolist())
         if "count_confidence" in queue else []
     )
-    pick_conf = st.sidebar.multiselect("Confidence", conf_vals, default=[]) if conf_vals else []
+    pick_conf = st.sidebar.multiselect("Count confidence", conf_vals, default=[]) if conf_vals else []
+
     search = st.sidebar.text_input("Find ASIN / title contains", value="").strip().lower()
 
     work = queue.copy()
     work["asin"] = work["asin"].astype(str)
-    work["split"] = work["asin"].map(lambda a: A.assign_split(a, eval_frac))
-    work["_n_human"] = work["asin"].map(lambda a: human_counts.get(a, 0))
 
     if hide_mine:
         work = work[~work["asin"].isin(my_asins)]
-    if needs_2nd:
-        work = work[
-            (work["split"] == "eval")
-            & (work["_n_human"] == 1)
-            & (~work["asin"].isin(my_asins))
-        ]
-    if pick_split:
-        work = work[work["split"].isin(pick_split)]
-    if only_unable and "count_unable" in work.columns:
-        work = work[work["count_unable"].fillna(False)]
-    if pick_strata:
-        work = work[work["stratum"].isin(pick_strata)]
+    if pick_class and "class_label" in work.columns:
+        work = work[work["class_label"].isin(pick_class)]
+    if pick_count and "count_label" in work.columns:
+        work = work[work["count_label"].isin(pick_count)]
     if pick_conf:
         work = work[work["count_confidence"].isin(pick_conf)]
     if search:
@@ -470,21 +464,21 @@ def _review_tab(
     annotations_path: Path,
     gold_path: Path,
     annotator: str,
-    eval_frac: float,
     html_dir: str | Path,
 ) -> None:
     if work.empty:
-        st.success("🎉 No rows left in this queue with the current filters.")
+        st.success("🎉 Nothing left in this queue with the current filters — "
+                   "clear a filter or switch queue source to keep reviewing.")
         return
 
-    st.progress(
-        (st.session_state.get("idx", 0) + 1) / len(work),
-        text=f"Row {st.session_state.get('idx', 0) + 1} of {len(work)} in queue",
-    )
+    # Clamp the cursor before showing progress so an exhausted queue never
+    # produces a progress value > 1.0.
+    cur = min(max(0, st.session_state.get("idx", 0)), len(work) - 1)
+    st.progress((cur + 1) / len(work), text=f"Row {cur + 1} of {len(work)} in queue")
+
     idx = _navigate(len(work))
     row = work.iloc[idx]
     asin = str(row["asin"])
-    split = A.assign_split(asin, eval_frac)
 
     left, right = st.columns([1.5, 1])
 
@@ -504,10 +498,11 @@ def _review_tab(
             st.markdown(f"### {_highlight_count(title, row)}")
             if media["price"]:
                 st.markdown(f"**{media['price']}**")
-        split_badge = "🔒 eval (held-out)" if split == "eval" else "train"
-        badges = [f"`{asin}`", f"[🔗 Amazon]({AMAZON_URL.format(asin=asin)})", f"split: **{split_badge}**"]
-        if _clean(row.get("stratum")):
-            badges.append(f"stratum: **{row.get('stratum')}**")
+        badges = [f"`{asin}`", f"[🔗 Amazon]({AMAZON_URL.format(asin=asin)})"]
+        if _clean(row.get("class_label")):
+            badges.append(f"class: **{row.get('class_label')}**")
+        if _clean(row.get("count_label")) and row.get("count_label") != "n/a":
+            badges.append(f"count: **{row.get('count_label')}**")
         st.markdown(" · ".join(badges))
         _annotation_status(annots, asin)
         _evidence_panel(row)
@@ -515,7 +510,7 @@ def _review_tab(
         _text_panel(row)
 
     with right:
-        _label_form(row, asin, annots, annotations_path, gold_path, annotator, eval_frac)
+        _label_form(row, asin, annots, annotations_path, gold_path, annotator)
 
     st.divider()
     _scraped_page_panel(asin, html_dir)
@@ -527,33 +522,25 @@ def _annotation_status(annots: pd.DataFrame, asin: str) -> None:
     sub = annots[annots["asin"].astype(str) == asin]
     if sub.empty:
         return
-    humans = sub[sub["source"].astype(str) == "human"]
-    seeded = (sub["source"].astype(str) == "model_seed").any()
-    names = ", ".join(sorted({str(a) for a in humans["annotator"].dropna().unique()}))
-    bits = []
-    if len(humans):
-        bits.append(f"👥 {humans['annotator'].nunique()} human label(s): {names}")
-    if seeded:
-        bits.append("🌱 model-seeded")
-    if bits:
-        st.caption(" · ".join(bits))
+    names = ", ".join(sorted({str(a) for a in sub["annotator"].dropna().unique()}))
+    if names:
+        st.caption(f"👥 {sub['annotator'].nunique()} label(s): {names}")
 
 
 def _advance_and_save(
     annotations_path: Path,
     gold_path: Path,
     record: dict,
-    eval_frac: float,
     n_rows: int,
 ) -> None:
-    _persist_annotation(annotations_path, gold_path, record, eval_frac)
+    _persist_annotation(annotations_path, gold_path, record)
     if st.session_state.get("idx", 0) < n_rows - 1:
         st.session_state.idx += 1
     st.rerun()
 
 
 def _prefill(annots: pd.DataFrame, asin: str, annotator: str, row: pd.Series):
-    """Defaults: my own prior label → any existing annotation (incl. seed) → model."""
+    """Defaults: my own prior label → any existing annotation → rule prediction."""
     er = None
     if annots is not None and len(annots):
         sub = annots[annots["asin"].astype(str) == asin].copy()
@@ -570,7 +557,6 @@ def _prefill(annots: pd.DataFrame, asin: str, annotator: str, row: pd.Series):
             str(_clean(er.get("exclude_reason_gold")) or ""),
             str(_clean(er.get("notes")) or ""),
             _clean(er.get("annotator")),
-            str(_clean(er.get("source")) or ""),
         )
     return (
         _as_pure_str(row.get("is_pure_bath_bomb")),
@@ -578,7 +564,6 @@ def _prefill(annots: pd.DataFrame, asin: str, annotator: str, row: pd.Series):
         str(_clean(row.get("exclude_reason")) or ""),
         "",
         None,
-        "",
     )
 
 
@@ -589,19 +574,16 @@ def _label_form(
     annotations_path: Path,
     gold_path: Path,
     annotator: str,
-    eval_frac: float,
 ) -> None:
     st.markdown("### ✍️ Your label")
-    def_pure, def_n, def_ex, def_notes, prev_by, prev_src = _prefill(annots, asin, annotator, row)
+    def_pure, def_n, def_ex, def_notes, prev_by = _prefill(annots, asin, annotator, row)
     def_ex = def_ex if def_ex in EXCLUDE_OPTIONS else ""
     if prev_by and str(prev_by) == str(annotator):
         st.info("You already labeled this — saving overwrites your label.")
-    elif prev_by == "model_seed" and prev_src == "model_seed":
-        st.caption("Pre-filled from a model seed — confirm or correct to make it a human label.")
 
     n_rows = st.session_state.get("_n_rows", 1)
 
-    # --- One-click accept of the model's prediction ---
+    # --- One-click accept of the rule prediction ---
     pred_pure = _as_pure_str(row.get("is_pure_bath_bomb"))
     pred_n = _as_int(row.get("n_bomb_balls"))
     if st.button(
@@ -611,19 +593,19 @@ def _label_form(
         type="primary",
         use_container_width=True,
         disabled=not annotator,
-        help="Save the model's prediction as a human label and advance" if annotator
+        help="Save the rule prediction as your label and advance" if annotator
         else "Enter your annotator name in the sidebar first",
     ):
         record = {
             "asin": asin,
-            "stratum": _clean(row.get("stratum")) or "",
+            "stratum": _clean(row.get("class_label")) or _clean(row.get("stratum")) or "",
             "is_pure_bath_bomb_gold": "" if pred_pure == "unsure" else pred_pure,
             "n_bomb_balls_gold": pred_n if (pred_pure == "true" and pred_n) else "",
             "exclude_reason_gold": str(_clean(row.get("exclude_reason")) or "") if pred_pure == "false" else "",
-            "notes": "accepted model prediction",
+            "notes": "accepted rule prediction",
             "annotator": annotator,
         }
-        _advance_and_save(annotations_path, gold_path, record, eval_frac, n_rows)
+        _advance_and_save(annotations_path, gold_path, record, n_rows)
 
     st.divider()
 
@@ -656,14 +638,14 @@ def _label_form(
             st.warning("pure=true but n_bomb_balls=0 — saved with a blank count.")
         record = {
             "asin": asin,
-            "stratum": _clean(row.get("stratum")) or "",
+            "stratum": _clean(row.get("class_label")) or _clean(row.get("stratum")) or "",
             "is_pure_bath_bomb_gold": "" if is_pure == "unsure" else is_pure,
             "n_bomb_balls_gold": n_out,
             "exclude_reason_gold": exclude if is_pure == "false" else "",
             "notes": notes,
             "annotator": annotator,
         }
-        _advance_and_save(annotations_path, gold_path, record, eval_frac, n_rows)
+        _advance_and_save(annotations_path, gold_path, record, n_rows)
 
 
 # --------------------------------------------------------------------------- #
@@ -678,7 +660,7 @@ def _num(x) -> str:
 
 
 def _agreement(sub: pd.DataFrame) -> tuple[int, float | None, int, float | None]:
-    """(n purity-labeled, purity agree, n count-labeled, count exact) vs model."""
+    """(n purity-labeled, purity agree, n count-labeled, count exact) vs the rules."""
     if sub is None or len(sub) == 0:
         return 0, None, 0, None
     pg = sub["is_pure_bath_bomb_gold"].map(_as_pure_str)
@@ -700,43 +682,15 @@ def _dashboard_tab(
     annots: pd.DataFrame,
     gold: pd.DataFrame,
     queue: pd.DataFrame,
-    annotations_path: Path,
-    eval_frac: float,
 ) -> None:
-    human = annots[annots["source"].astype(str) == "human"] if len(annots) else annots
-    seeds = annots[annots["source"].astype(str) == "model_seed"] if len(annots) else annots
-
     st.markdown("### 📊 Progress")
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Gold ASINs (human)", gold["asin"].nunique() if len(gold) else 0)
-    c2.metric("Human annotations", len(human))
-    c3.metric("Model seeds", len(seeds))
-    if len(gold) and "split" in gold.columns:
-        c4.metric("Eval / Train gold",
-                  f"{(gold['split'] == 'eval').sum()} / {(gold['split'] == 'train').sum()}")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Gold ASINs", gold["asin"].nunique() if len(gold) else 0)
+    c2.metric("Annotations", len(annots))
+    c3.metric("Annotators", annots["annotator"].nunique() if len(annots) else 0)
 
-    # --- Seeding control ---
-    st.markdown("### 🌱 Seed labels from model predictions")
-    st.caption("Seeds pre-fill the UI for confident **train**-split rows. The held-out "
-               "**eval** split is never seeded, so evaluation stays honest.")
-    full = _read(Path(cfg["paths"]["output_csv"]))
-    seed_conf = cfg.get("gold", {}).get("seed_confidence", ["high"])
-    if full is not None:
-        cands = A.seed_candidates(full, eval_frac=eval_frac, confidences=seed_conf, only_train=True)
-        already = set(seeds["asin"].astype(str)) if len(seeds) else set()
-        new_cands = [c for c in cands if str(c["asin"]) not in already]
-        st.write(f"**{len(new_cands)}** new train-split rows (confidence in {list(seed_conf)}) "
-                 f"can be seeded · {len(already)} already seeded.")
-        if st.button("🌱 Seed now", disabled=not new_cands):
-            merged = A.upsert_many(A.load_annotations(annotations_path), new_cands)
-            A.save_annotations(annotations_path, merged)
-            st.success(f"Seeded {len(new_cands)} rows.")
-            st.rerun()
-    else:
-        st.info("Run the pipeline first to produce predictions.")
-
-    if len(human) == 0:
-        st.info("No human labels yet. Switch to the Review tab to start.")
+    if len(annots) == 0:
+        st.info("No labels yet. Switch to the Review tab to start.")
         return
 
     # --- Inter-annotator agreement ---
@@ -750,33 +704,23 @@ def _dashboard_tab(
     if iaa["conflicts"]:
         st.markdown("**Disagreements to adjudicate**")
         st.dataframe(pd.DataFrame(iaa["conflicts"]), hide_index=True, use_container_width=True)
-    elif iaa["n_double_labeled"] == 0:
-        st.caption("No ASIN has ≥2 human labels yet — use the "
-                   "*'Only eval rows needing a 2nd label'* filter to build agreement.")
 
-    # --- Agreement vs model, by split ---
-    st.markdown("### 🎯 Human gold vs model")
+    # --- Agreement vs the rules ---
+    st.markdown("### 🎯 Human gold vs rule prediction")
+    full = _read(Path(cfg["paths"]["output_csv"]))
     if full is not None and len(gold):
         m = gold.merge(full[["asin", "is_pure_bath_bomb", "n_bomb_balls"]], on="asin", how="inner")
-        rows = []
-        for name, sub in [
-            ("eval (honest)", m[m["split"] == "eval"] if "split" in m else m.iloc[0:0]),
-            ("train", m[m["split"] == "train"] if "split" in m else m.iloc[0:0]),
-            ("all", m),
-        ]:
-            n_p, pa, n_c, ce = _agreement(sub)
-            rows.append({
-                "split": name, "purity_labeled": n_p, "purity_agree": _pct(pa),
-                "count_labeled": n_c, "count_exact": _pct(ce),
-            })
-        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
-        st.caption("Trust the **eval** row: it's the held-out slice the model never seeded.")
+        n_p, pa, n_c, ce = _agreement(m)
+        r1, r2, r3 = st.columns(3)
+        r1.metric("Purity labeled", n_p)
+        r2.metric("Purity agree", _pct(pa))
+        r3.metric("Count exact", _pct(ce))
 
     # --- Breakdowns + downloads ---
     with st.expander("Breakdowns & raw data"):
-        st.markdown("**Human annotations by annotator**")
+        st.markdown("**Annotations by annotator**")
         st.dataframe(
-            human.groupby(human["annotator"].fillna("(blank)")).size().rename("labels").reset_index(),
+            annots.groupby(annots["annotator"].fillna("(blank)")).size().rename("labels").reset_index(),
             hide_index=True, use_container_width=True,
         )
         st.markdown("**Adjudicated gold**")
@@ -801,10 +745,9 @@ def main() -> None:
     annotations_path = Path(
         cfg["paths"].get("annotations_csv", ROOT / "data" / "gold" / "annotations.csv")
     )
-    eval_frac = float(cfg.get("gold", {}).get("eval_frac", 0.2))
 
     st.title("🛁 Bath Bomb Review Console")
-    st.caption("Review the evidence, then confirm or correct the model. "
+    st.caption("Review the evidence, then confirm or correct the rule prediction. "
                f"Annotations → `{annotations_path}` · gold → `{gold_path}`.")
 
     annotator = st.sidebar.text_input("👤 Annotator name", value=st.session_state.get("annotator", ""))
@@ -815,41 +758,31 @@ def main() -> None:
 
     queue, source = _load_queue(cfg)
     annots = A.load_annotations(annotations_path)
-    gold = A.adjudicate(annots, humans_only=True)
+    gold = A.adjudicate(annots)
 
-    human = annots[annots["source"].astype(str) == "human"] if len(annots) else annots
     my_asins = (
-        set(human[human["annotator"].astype(str) == annotator]["asin"].astype(str))
-        if annotator and len(human) else set()
+        set(annots[annots["annotator"].astype(str) == annotator]["asin"].astype(str))
+        if annotator and len(annots) else set()
     )
-    human_counts = (
-        human.groupby(human["asin"].astype(str))["annotator"].nunique().to_dict()
-        if len(human) else {}
-    )
-    human_asins = set(human["asin"].astype(str)) if len(human) else set()
+    labeled_asins = set(annots["asin"].astype(str)) if len(annots) else set()
 
-    work = _apply_filters(queue, source, my_asins, human_counts, eval_frac)
+    work = _apply_filters(queue, my_asins)
     st.session_state["_n_rows"] = len(work)
 
     st.sidebar.markdown("---")
     sc1, sc2 = st.sidebar.columns(2)
     sc1.metric("In queue", len(work))
     sc2.metric("My labels", len(my_asins))
-    if len(gold) and "split" in gold.columns:
-        e = int((gold["split"] == "eval").sum())
-        t = int((gold["split"] == "train").sum())
-        dbl = A.compute_iaa(annots)["n_double_labeled"] if len(annots) else 0
-        st.sidebar.caption(f"Gold: 🔒 {e} eval · {t} train · 👥 {dbl} double-labeled")
-    remaining = queue["asin"].nunique() - len(human_asins & set(queue["asin"].astype(str)))
+    remaining = queue["asin"].nunique() - len(labeled_asins & set(queue["asin"].astype(str)))
     st.sidebar.metric("Queue unlabeled", max(0, remaining))
 
     html_dir = cfg["paths"].get("html_dir", "")
 
     review, dash = st.tabs(["📝 Review & label", "📊 Dashboard"])
     with review:
-        _review_tab(work, annots, annotations_path, gold_path, annotator, eval_frac, html_dir)
+        _review_tab(work, annots, annotations_path, gold_path, annotator, html_dir)
     with dash:
-        _dashboard_tab(cfg, annots, gold, queue, annotations_path, eval_frac)
+        _dashboard_tab(cfg, annots, gold, queue)
 
 
 if __name__ == "__main__":

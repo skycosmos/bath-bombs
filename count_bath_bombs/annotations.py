@@ -1,39 +1,25 @@
 """
-Multi-annotator label store + adjudication, inter-annotator agreement (IAA),
-and model-prediction seeding.
+Multi-annotator label store + adjudication and inter-annotator agreement (IAA).
 
 Design
 ------
 - `annotations.csv` is the source of truth. It may hold MANY rows per ASIN
-  (one per annotator), each tagged with:
-    source : "human" | "model_seed"
-    split  : "eval" | "train"   (deterministic, hash-based, stable per ASIN)
-- `gold_labels.csv` is DERIVED by adjudicating human-only annotations into one
-  row per ASIN (majority vote, ties broken by most-recent). It stays
-  backward-compatible with scripts/eval_gold.py and evaluate_against_gold().
-
-Rules that keep evaluation honest
----------------------------------
-- The held-out **eval** split is never seeded from model predictions
-  (`seed_from_predictions(..., only_train=True)`), so the model is never scored
-  on labels it produced itself.
-- IAA is measured only over ASINs a human labeled at least twice.
+  (one per annotator).
+- `gold_labels.csv` is DERIVED by adjudicating annotations into one row per ASIN
+  (majority vote, ties broken by most-recent).
 """
 
 from __future__ import annotations
 
-import hashlib
 import time
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 import pandas as pd
 
 ANNOTATION_COLUMNS = [
     "asin",
     "stratum",
-    "split",
-    "source",
     "is_pure_bath_bomb_gold",
     "n_bomb_balls_gold",
     "exclude_reason_gold",
@@ -69,19 +55,6 @@ def pure_str(value: Any) -> str | None:
 
 def now_ts() -> float:
     return time.time()
-
-
-# --------------------------------------------------------------------------- #
-# Split assignment — deterministic, stable, order-independent
-# --------------------------------------------------------------------------- #
-def assign_split(asin: str, eval_frac: float = 0.2) -> str:
-    """Hash the ASIN into a stable [eval|train] bucket. No RNG, no run-order dep."""
-    if eval_frac <= 0:
-        return "train"
-    if eval_frac >= 1:
-        return "eval"
-    h = int(hashlib.sha1(str(asin).encode("utf-8")).hexdigest(), 16) % 10000
-    return "eval" if h < int(eval_frac * 10000) else "train"
 
 
 # --------------------------------------------------------------------------- #
@@ -125,12 +98,6 @@ def upsert_annotation(ann: pd.DataFrame, record: dict) -> pd.DataFrame:
     return pd.concat([ann, new], ignore_index=True)
 
 
-def upsert_many(ann: pd.DataFrame, records: Iterable[dict]) -> pd.DataFrame:
-    for rec in records:
-        ann = upsert_annotation(ann, rec)
-    return ann
-
-
 # --------------------------------------------------------------------------- #
 # Adjudication  → one gold row per ASIN
 # --------------------------------------------------------------------------- #
@@ -159,7 +126,6 @@ def _majority(values: list, latest_order: list):
 GOLD_OUT_COLUMNS = [
     "asin",
     "stratum",
-    "split",
     "is_pure_bath_bomb_gold",
     "n_bomb_balls_gold",
     "exclude_reason_gold",
@@ -169,17 +135,14 @@ GOLD_OUT_COLUMNS = [
 ]
 
 
-def adjudicate(ann: pd.DataFrame, humans_only: bool = True) -> pd.DataFrame:
+def adjudicate(ann: pd.DataFrame) -> pd.DataFrame:
     """Collapse annotations to one adjudicated gold row per ASIN."""
     if ann is None or len(ann) == 0:
         return pd.DataFrame(columns=GOLD_OUT_COLUMNS)
 
     rows: list[dict] = []
     for asin, g in ann.groupby(ann["asin"].astype(str)):
-        sub = g[g["source"].astype(str) == "human"] if humans_only else g
-        if sub.empty:
-            continue
-        sub = _latest_first(sub)
+        sub = _latest_first(g)
 
         pur_latest = [pure_str(v) for v in sub["is_pure_bath_bomb_gold"]]
         purity = _majority(pur_latest, pur_latest)
@@ -203,7 +166,6 @@ def adjudicate(ann: pd.DataFrame, humans_only: bool = True) -> pd.DataFrame:
             {
                 "asin": asin,
                 "stratum": first.get("stratum"),
-                "split": first.get("split"),
                 "is_pure_bath_bomb_gold": "" if purity is None else purity,
                 "n_bomb_balls_gold": n_val,
                 "exclude_reason_gold": exr,
@@ -215,14 +177,10 @@ def adjudicate(ann: pd.DataFrame, humans_only: bool = True) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=GOLD_OUT_COLUMNS)
 
 
-def rebuild_gold(
-    annotations_path: str | Path,
-    gold_path: str | Path,
-    humans_only: bool = True,
-) -> pd.DataFrame:
+def rebuild_gold(annotations_path: str | Path, gold_path: str | Path) -> pd.DataFrame:
     """Derive gold_labels.csv from annotations and write it to disk."""
     ann = load_annotations(annotations_path)
-    gold = adjudicate(ann, humans_only=humans_only)
+    gold = adjudicate(ann)
     Path(gold_path).parent.mkdir(parents=True, exist_ok=True)
     gold.to_csv(gold_path, index=False)
     return gold
@@ -246,7 +204,7 @@ def _cohens_kappa(pairs: list[tuple]) -> float | None:
 
 
 def compute_iaa(ann: pd.DataFrame) -> dict:
-    """Agreement over ASINs labeled by ≥2 distinct human annotators."""
+    """Agreement over ASINs labeled by ≥2 distinct annotators."""
     res: dict = {
         "n_double_labeled": 0,
         "purity_agreement": None,
@@ -256,9 +214,6 @@ def compute_iaa(ann: pd.DataFrame) -> dict:
     }
     if ann is None or len(ann) == 0:
         return res
-    hum = ann[ann["source"].astype(str) == "human"]
-    if hum.empty:
-        return res
 
     pur_flags: list[int] = []
     cnt_flags: list[int] = []
@@ -266,7 +221,7 @@ def compute_iaa(ann: pd.DataFrame) -> dict:
     conflicts: list[dict] = []
     n_double = 0
 
-    for asin, g in hum.groupby(hum["asin"].astype(str)):
+    for asin, g in ann.groupby(ann["asin"].astype(str)):
         g = _latest_first(g.drop_duplicates(subset=["annotator"]))
         if g["annotator"].nunique() < 2:
             continue
@@ -307,44 +262,3 @@ def compute_iaa(ann: pd.DataFrame) -> dict:
     res["purity_kappa"] = _cohens_kappa(pairs)
     res["conflicts"] = conflicts
     return res
-
-
-# --------------------------------------------------------------------------- #
-# Seeding from model predictions
-# --------------------------------------------------------------------------- #
-def seed_candidates(
-    pred: pd.DataFrame,
-    eval_frac: float = 0.2,
-    confidences: Iterable[str] = ("high",),
-    only_train: bool = True,
-) -> list[dict]:
-    """Model-prediction annotations for confident rows (train split by default)."""
-    conf_set = {str(c).lower() for c in confidences}
-    recs: list[dict] = []
-    for _, r in pred.iterrows():
-        asin = str(r.get("asin"))
-        split = assign_split(asin, eval_frac)
-        if only_train and split != "train":
-            continue
-        if str(r.get("count_confidence")).lower() not in conf_set:
-            continue
-        purity = pure_str(r.get("is_pure_bath_bomb"))
-        if purity not in ("true", "false"):
-            continue
-        n = to_int(r.get("n_bomb_balls"))
-        exr = r.get("exclude_reason")
-        recs.append(
-            {
-                "asin": asin,
-                "stratum": r.get("stratum"),
-                "split": split,
-                "source": "model_seed",
-                "is_pure_bath_bomb_gold": purity,
-                "n_bomb_balls_gold": n if (purity == "true" and n) else "",
-                "exclude_reason_gold": exr if (purity == "false" and isinstance(exr, str)) else "",
-                "notes": "seeded from model prediction",
-                "annotator": "model_seed",
-                "ts": None,
-            }
-        )
-    return recs

@@ -35,8 +35,8 @@ keepa:
 # 2) Purification — is a listing a countable bath bomb?
 #   A listing is PURE only if a bath-bomb phrase LEADS the title (nothing
 #   disqualifying precedes it). Ladder, first match wins:
-#     craft_kit -> bundle -> substitute -> (no bomb phrase) unclassified
-#       -> (ingredient before bomb) unclassified -> pure
+#     (no bomb phrase) no-bath-bomb ; else:
+#     craft_kit -> bundle -> substitute -> (ingredient before bomb) ingredients -> pure
 #   Shower steamers / bath melts / fizz tablets are substitutes; shower bombs
 #   count as bath bombs.
 # ----------------------------------------------------------------------------
@@ -53,7 +53,7 @@ purity:
       - '\bshower bombs?\b'
       - '\baromabombs?\b'
     # Supplies to MAKE bombs -> exclude "craft_kit" (only when a bomb phrase is
-    # also present; a kit phrase alone, with no bomb wording, is unclassified).
+    # also present; a kit phrase alone, with no bomb wording, is no-bath-bomb).
     craft_kit:
       - '\bcraft kit\b'
       - '\bdiy\b'
@@ -84,7 +84,7 @@ purity:
       - '\bnecklaces?\b'
       - '\brings?\b'
       - '\btoys?\b'
-    # Raw materials. If they appear before a bomb phrase -> unclassified.
+    # Raw materials. If they appear before a bomb phrase -> ingredients.
     ingredients:
       - '\bcitric acid\b'
       - '\bbaking soda\b'
@@ -212,5 +212,5 @@ counting:
 labeling:
   sample_size: 300
   seed: 42
-  class_labels: [pure, craft_kit, bundle, substitute, unclassified]
+  class_labels: [pure, craft_kit, bundle, substitute, ingredients, no-bath-bomb]
   count_labels: [multi_pack, single, pack_as_one, extreme_count, count_unable, "n/a"]

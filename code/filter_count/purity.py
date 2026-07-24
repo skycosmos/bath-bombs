@@ -4,13 +4,16 @@ All word lists live in config (`purity.lexicon`). The ladder below is the fixed
 decision logic; the words that fire each rule come entirely from the config.
 
 A listing is PURE only if a bath-bomb phrase leads the title — nothing that
-signals a different product precedes it. Ladder (first match wins):
-  1. craft_kit    bomb phrase + DIY / make-your-own / mould   -> exclude "craft_kit"
-  2. bundle       bomb + companion (or "surprise ... inside") -> exclude "bundle"
-  3. substitute   steamer / salt / melt / tablet, at/before a bomb phrase -> "substitute"
-  4. no bomb      no bomb phrase anywhere in the title        -> exclude "unclassified"
-  5. ingredient   citric acid / baking soda before the bomb   -> exclude "unclassified"
-  6. pure         a bomb phrase leads and nothing above fired -> is_pure = True
+signals a different product precedes it. First split on whether the title has a
+bomb phrase at all, then run the bomb-present ladder:
+
+  NO bomb phrase -> exclude "no-bath-bomb"   (always, even for salts/steamers)
+  bomb phrase present (ladder, first match wins):
+      1. craft_kit   DIY / make-your-own / mould          -> exclude "craft_kit"
+      2. bundle      companion, or "surprise ... inside"  -> exclude "bundle"
+      3. substitute  steamer/salt/melt/tablet BEFORE bomb -> exclude "substitute"
+      4. ingredient  citric acid / baking soda BEFORE bomb -> exclude "ingredients"
+      5. pure        nothing above fired                  -> is_pure = True
 """
 from __future__ import annotations
 
@@ -63,31 +66,31 @@ class Purifier:
         bomb = self.bomb.search(text)
         bomb_pos = bomb.start() if bomb else None
 
-        # 1. Craft kit — a kit to MAKE bombs. Only when a bomb phrase is also
-        #    present; kit-only titles with no bomb wording fall through (-> unclassified).
-        if bomb_pos is not None and self.craft_kit.search(text):
+        # No bomb wording anywhere -> "no-bath-bomb" (always, even for a lone
+        # substitute like "Bath Salts" — substitute only applies vs a bomb phrase).
+        if bomb_pos is None:
+            return PurityResult(False, "no-bath-bomb", True, "rule_no_bomb")
+
+        # A bomb phrase is present. Ladder, first match wins.
+        # 1. Craft kit — a kit to MAKE bombs (DIY / mould / making kit).
+        if self.craft_kit.search(text):
             return PurityResult(False, "craft_kit", False, "rule_craft_kit")
 
         # 2. Bundle — a bomb sold with a companion item, or a surprise hidden inside.
-        if bomb_pos is not None:
-            if self.companion.search(text) or (self.surprise.search(text) and self.inside.search(text)):
-                return PurityResult(False, "bundle", False, "rule_bundle")
+        if self.companion.search(text) or (self.surprise.search(text) and self.inside.search(text)):
+            return PurityResult(False, "bundle", False, "rule_bundle")
 
-        # 3. Substitute — a substitute form at/before any bomb phrase (or no bomb).
+        # 3. Substitute — a substitute form appearing BEFORE the bomb phrase.
         sub = self.substitute.search(text)
-        if sub is not None and (bomb_pos is None or sub.start() < bomb_pos):
+        if sub is not None and sub.start() < bomb_pos:
             return PurityResult(False, "substitute", False, "rule_substitute")
 
-        # 4. No bomb wording anywhere -> unclassified.
-        if bomb_pos is None:
-            return PurityResult(False, "unclassified", True, "rule_no_bomb")
-
-        # 5. Ingredient wording before the bomb phrase -> unclassified.
+        # 4. Ingredient wording BEFORE the bomb phrase -> "ingredients".
         ing = self.ingredient.search(text)
         if ing is not None and ing.start() < bomb_pos:
-            return PurityResult(False, "unclassified", True, "rule_ingredient")
+            return PurityResult(False, "ingredients", True, "rule_ingredient")
 
-        # 6. A bomb phrase leads and nothing above fired -> pure.
+        # 5. A bomb phrase leads and nothing above fired -> pure.
         return PurityResult(True, None, False, "rule_positive")
 
 

@@ -59,13 +59,13 @@ def save_label(path, record: dict) -> pd.DataFrame:
 # Taxonomy — the two review dimensions (labels themselves are in config)
 # --------------------------------------------------------------------------- #
 def class_label_for_row(row: pd.Series) -> str:
-    """Classification outcome: pure / <exclude_reason> / unclassified."""
+    """Classification outcome: pure / <exclude_reason> / no-bath-bomb."""
     if row.get("is_pure_bath_bomb") is True:
         return "pure"
     reason = row.get("exclude_reason")
     if isinstance(reason, str) and reason:
         return reason
-    return "unclassified"
+    return "no-bath-bomb"
 
 
 def count_label_for_row(row: pd.Series) -> str:

@@ -482,15 +482,36 @@ def _text_panel(row: pd.Series) -> None:
 # --------------------------------------------------------------------------- #
 # Review tab
 # --------------------------------------------------------------------------- #
+def _truthy(s: pd.Series) -> pd.Series:
+    """Coerce a bool-ish column (True/False/1/0, possibly read as strings) to bool."""
+    return s.astype(str).str.strip().str.lower().isin(["true", "1", "1.0"])
+
+
 def _apply_filters(queue: pd.DataFrame, labeled_asins: set) -> pd.DataFrame:
     st.sidebar.markdown("### Filters")
     hide_labeled = st.sidebar.checkbox("Hide already-labeled ASINs", value=True)
+
+    st.sidebar.markdown("**Review queue**")
+    n_review = int(_truthy(queue["needs_review"]).sum()) if "needs_review" in queue else 0
+    n_conf = int(_truthy(queue["count_conflict"]).sum()) if "count_conflict" in queue else 0
+    only_review = st.sidebar.checkbox(
+        f"Only rows needing review ({n_review})",
+        value=False,
+        disabled=("needs_review" not in queue),
+        help="Counting flagged these: no-evidence singles + unresolved count conflicts.",
+    )
+    only_conflict = st.sidebar.checkbox(
+        f"Only count conflicts ({n_conf})",
+        value=False,
+        disabled=("count_conflict" not in queue),
+        help="≥2 number sources reported different counts >1.",
+    )
 
     st.sidebar.markdown("**Classification**")
     class_vals = [c for c in CLASS_LABELS if c in set(queue.get("class_label", pd.Series()).dropna())]
     pick_class = st.sidebar.multiselect(
         "Classification label", class_vals, default=[],
-        help="pure / craft_kit / bundle / substitute / toiletry / unclassified",
+        help="pure / craft_kit / bundle / substitute / ingredients / no-bath-bomb",
     )
 
     st.sidebar.markdown("**Counting**")
@@ -512,6 +533,10 @@ def _apply_filters(queue: pd.DataFrame, labeled_asins: set) -> pd.DataFrame:
 
     if hide_labeled:
         work = work[~work["asin"].isin(labeled_asins)]
+    if only_review and "needs_review" in work.columns:
+        work = work[_truthy(work["needs_review"])]
+    if only_conflict and "count_conflict" in work.columns:
+        work = work[_truthy(work["count_conflict"])]
     if pick_class and "class_label" in work.columns:
         work = work[work["class_label"].isin(pick_class)]
     if pick_count and "count_label" in work.columns:
@@ -590,6 +615,10 @@ def _review_tab(
             badges.append(f"class: **{row.get('class_label')}**")
         if _clean(row.get("count_label")) and row.get("count_label") != "n/a":
             badges.append(f"count: **{row.get('count_label')}**")
+        if str(_clean(row.get("needs_review"))).lower() in ("true", "1", "1.0"):
+            badges.append("🔎 **needs review**")
+        if str(_clean(row.get("count_conflict"))).lower() in ("true", "1", "1.0"):
+            badges.append("⚠️ **count conflict**")
         st.markdown(" · ".join(badges))
         _label_status(labels, asin)
         _evidence_panel(row)

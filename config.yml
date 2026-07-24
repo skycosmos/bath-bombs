@@ -52,7 +52,8 @@ purity:
       - '\bbath blasters?\b'
       - '\bshower bombs?\b'
       - '\baromabombs?\b'
-    # Supplies to MAKE bombs, not finished bombs -> exclude "craft_kit".
+    # Supplies to MAKE bombs -> exclude "craft_kit" (only when a bomb phrase is
+    # also present; a kit phrase alone, with no bomb wording, is unclassified).
     craft_kit:
       - '\bcraft kit\b'
       - '\bdiy\b'
@@ -78,7 +79,7 @@ purity:
       - '\bconditioners?\b'
       - '\bdiffusers?\b'
       - '\bpedicure\b'
-      - '\bbubble bath\b'
+      - '\bbubble bath\b(?!\s+bombs?\b)'   # "bubble bath BOMB" is a bath bomb, not a companion
       - '\bcauldrons?\b'
       - '\bnecklaces?\b'
       - '\brings?\b'
@@ -97,7 +98,7 @@ purity:
       - '\b(?:fizz )?tablets?\b|\bbath drops?\b'
     # Bundle context helpers ("... with a surprise hidden inside").
     surprise: '\bsurprise\b'
-    inside:   '\b(?:inside|hidden)\b'
+    inside:   '\b(?:in|inside|hidden)\b'
 
 # ----------------------------------------------------------------------------
 # 3) Counting — how many bomb units in a pure listing.

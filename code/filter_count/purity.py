@@ -5,7 +5,7 @@ decision logic; the words that fire each rule come entirely from the config.
 
 A listing is PURE only if a bath-bomb phrase leads the title — nothing that
 signals a different product precedes it. Ladder (first match wins):
-  1. craft_kit    DIY / make-your-own / mould                -> exclude "craft_kit"
+  1. craft_kit    bomb phrase + DIY / make-your-own / mould   -> exclude "craft_kit"
   2. bundle       bomb + companion (or "surprise ... inside") -> exclude "bundle"
   3. substitute   steamer / salt / melt / tablet, at/before a bomb phrase -> "substitute"
   4. no bomb      no bomb phrase anywhere in the title        -> exclude "unclassified"
@@ -63,8 +63,9 @@ class Purifier:
         bomb = self.bomb.search(text)
         bomb_pos = bomb.start() if bomb else None
 
-        # 1. Craft kit (unconditional).
-        if self.craft_kit.search(text):
+        # 1. Craft kit — a kit to MAKE bombs. Only when a bomb phrase is also
+        #    present; kit-only titles with no bomb wording fall through (-> unclassified).
+        if bomb_pos is not None and self.craft_kit.search(text):
             return PurityResult(False, "craft_kit", False, "rule_craft_kit")
 
         # 2. Bundle — a bomb sold with a companion item, or a surprise hidden inside.

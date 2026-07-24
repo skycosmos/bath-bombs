@@ -12,13 +12,15 @@ from typing import Any
 
 import pandas as pd
 
-# Resolution signal -> candidate column produced by extract().
-_SIGNAL_COL = {
-    "number_of_items": "cand_number_of_items",
-    "keepa_number_of_items": "cand_keepa_number_of_items",
-    "keepa_package_quantity": "cand_keepa_package_qty",
-    "label_unit_num": "cand_label_unit_num",
+# Number sources -> the candidate column produced by candidates().
+_SRC_COL = {
+    "title": "cand_title", "bullets": "cand_bullets", "size": "cand_size", "description": "cand_description",
+    "number_of_items": "cand_number_of_items", "keepa_number_of_items": "cand_keepa_number_of_items",
+    "keepa_package_quantity": "cand_keepa_package_qty", "label_unit_num": "cand_label_unit_num",
+    "unit_num": "cand_unit_num",
 }
+_TEXT = ("title", "bullets", "size", "description")
+_CATALOG = ("number_of_items", "keepa_number_of_items", "keepa_package_quantity", "unit_num")
 
 
 def _to_int(value: Any) -> int | None:
@@ -39,8 +41,10 @@ class Counter:
         self.channels: dict[str, list[str]] = c["text_channels"]
         self.patterns = {name: re.compile(rx, re.IGNORECASE) for name, rx in c["patterns"].items()}
         self.priority: dict[str, int] = c["pattern_priority"]
-        self.order: list[str] = c["resolution_order"]
         self.conf: dict[str, str] = c["confidence"]
+        self.weights: dict[str, int] = c.get("source_weights", {})
+        self.conflict_needs_review = bool(c.get("conflict_needs_review", True))
+        self.max_count = int(c.get("max_count", 1000))
         self.default_single = int(c.get("default_single", 1))
 
         # Spelled-out numbers ("six" -> 6). Two matchers: a word next to a
@@ -55,6 +59,10 @@ class Counter:
                 re.IGNORECASE,
             )
             self._word_paren_re = re.compile(rf"\b(?P<w>{alt})\s*\((?P<n>\d+)\)", re.IGNORECASE)
+
+    def _cap(self, v):
+        """Drop implausibly large counts (barcodes, model numbers)."""
+        return int(v) if (v is not None and 0 < v <= self.max_count) else None
 
     # -- candidate extraction ------------------------------------------------ #
     def _parse(self, text: str) -> list[tuple[int, str]]:
@@ -103,72 +111,78 @@ class Counter:
         for name, cols in self.channels.items():
             text = "\n".join(str(row.get(c) or "") for c in cols)
             n, pat = self.best_text_count(text)
+            n = self._cap(n)
             out[f"cand_{name}"] = n
-            out[f"cand_{name}_pattern"] = pat
-        out["cand_number_of_items"] = _to_int(row.get("number_of_items"))
-        out["cand_keepa_number_of_items"] = _to_int(row.get("keepa_number_of_items"))
-        out["cand_keepa_package_qty"] = _to_int(row.get("keepa_package_quantity"))
+            out[f"cand_{name}_pattern"] = pat if n is not None else None
+        out["cand_number_of_items"] = self._cap(_to_int(row.get("number_of_items")))
+        out["cand_keepa_number_of_items"] = self._cap(_to_int(row.get("keepa_number_of_items")))
+        out["cand_keepa_package_qty"] = self._cap(_to_int(row.get("keepa_package_quantity")))
         out["cand_unit_num"] = (
-            _to_int(row.get("unit_num"))
+            self._cap(_to_int(row.get("unit_num")))
             if str(row.get("unit_text") or "").lower() in {"count", "each", "unit", "units"}
             else None
         )
         out["cand_label_unit_num"] = (
-            _to_int(row.get("label_unit_num"))
+            self._cap(_to_int(row.get("label_unit_num")))
             if "count" in str(row.get("label_unit") or "").lower()
             else None
         )
         return out
 
-    # -- resolution ---------------------------------------------------------- #
-    def _text_winner(self, cand: dict) -> tuple[int | None, str | None]:
-        """Best text multi-count across channels, in title>bullets>size>description order."""
-        for ch in ("title", "bullets", "size", "description"):
-            v = cand.get(f"cand_{ch}")
-            if v is not None and v > 1:
-                return int(v), ch
-        return None, None
-
+    # -- resolution (weighted consensus) ------------------------------------- #
     def resolve(self, is_pure, cand: dict) -> dict[str, Any]:
-        text_multi, _ = self._text_winner(cand)
-        catalog_ones = [
-            cand.get(k) for k in
-            ("cand_number_of_items", "cand_keepa_number_of_items", "cand_keepa_package_qty", "cand_unit_num")
-            if cand.get(k) == 1
+        # (source, value) for every source that reported a positive number.
+        reports = [
+            (s, int(cand[c])) for s, c in _SRC_COL.items()
+            if cand.get(c) is not None and _to_int(cand[c]) is not None
         ]
-        seller_pack = bool(text_multi and catalog_ones)
+        multi = [(s, v) for s, v in reports if v > 1]
+        ones = {s for s, v in reports if v == 1}
+        # "N vs 1": a text multi-count exists AND a catalog field reads 1.
+        seller_pack = bool(any(s in _TEXT for s, v in multi) and (ones & set(_CATALOG)))
+        base = {"seller_counts_pack_as_one": seller_pack}
 
         if is_pure is not True:
-            return {
-                "n_bomb_balls": None, "count_confidence": "n/a", "count_source": None,
-                "seller_counts_pack_as_one": seller_pack, "count_unable": False,
-            }
+            return {"n_bomb_balls": None, "count_confidence": "n/a", "count_source": None,
+                    "count_unable": False, "count_conflict": False, "needs_review": False, **base}
 
-        # Walk the configured resolution ladder — first signal with a value >1 wins.
-        for signal in self.order:
-            if signal == "text":
-                n, ch = self._text_winner(cand)
-                if n is not None:
-                    return self._done(n, ch, self.conf.get(f"text_{ch}", "medium"), seller_pack)
-            else:
-                v = cand.get(_SIGNAL_COL.get(signal, ""))
-                if v is not None and v > 1:
-                    return self._done(int(v), signal, self.conf.get(signal, "medium"), seller_pack)
+        # No multi-count anywhere -> a single (an explicit "1") or an assumption.
+        if not multi:
+            text_one = any(s in ("title", "bullets", "size") for s in ones)
+            if ones:
+                conf = self.conf.get("single_default", "medium") if (text_one or "number_of_items" in ones) else "low"
+                return self._done(self.default_single, "single_default", conf, base,
+                                  conflict=False, needs_review=(conf == "low"))
+            return self._done(self.default_single, "assumed_single",
+                              self.conf.get("assumed_single", "low"), base,
+                              conflict=False, needs_review=True)
 
-        # No multi-count. Fall back to an explicit "1", else assume a single.
-        noi = cand.get("cand_number_of_items")
-        keepa_noi = cand.get("cand_keepa_number_of_items")
-        label_n = cand.get("cand_label_unit_num")
-        text_one = cand.get("cand_title") == 1 or cand.get("cand_bullets") == 1 or cand.get("cand_size") == 1
-        if noi == 1 or text_one or label_n == 1 or keepa_noi == 1:
-            conf = self.conf.get("single_default", "medium") if (noi == 1 or text_one) else "low"
-            return self._done(self.default_single, "single_default", conf, seller_pack)
-        return self._done(self.default_single, "assumed_single", self.conf.get("assumed_single", "low"), seller_pack)
+        # Weighted consensus over the values >1 (1s never vote -> N-vs-1 accepts N).
+        tally: dict[int, int] = {}
+        best: dict[int, tuple[int, str]] = {}   # value -> (best single weight, source)
+        for s, v in multi:
+            w = self.weights.get(s, 1)
+            tally[v] = tally.get(v, 0) + w
+            if v not in best or w > best[v][0]:
+                best[v] = (w, s)
+        winner = max(
+            tally,
+            key=lambda v: (tally[v], any(s in _TEXT for s, vv in multi if vv == v), v),
+        )
+        conflict = len(tally) >= 2
+        # A conflict only needs review when the winner does NOT clearly dominate
+        # (a lone garbage catalog value vs a text consensus should not flag it).
+        others = [tally[v] for v in tally if v != winner]
+        dominant = (not others) or tally[winner] >= 2 * max(others)
+        needs_review = conflict and not dominant and self.conflict_needs_review
+        src = best[winner][1]
+        conf = "low" if needs_review else self.conf.get(f"text_{src}" if src in _TEXT else src, "medium")
+        return self._done(winner, src, conf, base, conflict=conflict, needs_review=needs_review)
 
-    def _done(self, n, source, conf, seller_pack) -> dict[str, Any]:
+    def _done(self, n, source, conf, base, *, conflict, needs_review) -> dict[str, Any]:
         return {
             "n_bomb_balls": int(n), "count_confidence": conf, "count_source": source,
-            "seller_counts_pack_as_one": seller_pack, "count_unable": False,
+            "count_unable": False, "count_conflict": conflict, "needs_review": needs_review, **base,
         }
 
 

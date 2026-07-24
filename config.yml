@@ -169,13 +169,25 @@ counting:
     eleven: 11
     twelve: 12
     dozen: 12
-  # First signal that yields a value > 1 wins.
-  resolution_order:
-    - text                     # best count across the text channels (title>bullets>size>description)
-    - number_of_items          # Amazon "Number of Items"
-    - keepa_number_of_items    # Keepa numberOfItems
-    - keepa_package_quantity   # Keepa packageQuantity
-    - label_unit_num           # scrape label "N count"
+  # Resolution is by WEIGHTED CONSENSUS, not first-signal-wins. Every source's
+  # candidate value >1 gets a vote weighted by source_weights; the value with
+  # the most weight wins (tie-break: a text source present, then the larger
+  # value). A candidate of 1 never votes — so a catalog "1" (seller counting the
+  # package as one item, "N Count / Pack of 1") can never outvote a real N.
+  source_weights:
+    title: 5
+    bullets: 3
+    description: 3
+    size: 2
+    number_of_items: 2
+    keepa_number_of_items: 2
+    keepa_package_quantity: 1   # overcounts ~37% of the time it wins
+    label_unit_num: 1           # overcounts ~47%
+    unit_num: 1
+  # Flag rows with >=2 distinct values >1 as a conflict -> low confidence + review.
+  conflict_needs_review: true
+  # Reject implausible counts (barcodes, model numbers, mis-parsed IDs).
+  max_count: 1000
   confidence:
     text_title: high
     text_bullets: high
@@ -183,8 +195,9 @@ counting:
     text_description: medium
     number_of_items: medium
     keepa_number_of_items: medium
-    keepa_package_quantity: medium
-    label_unit_num: medium
+    keepa_package_quantity: low   # demoted — overcounts
+    label_unit_num: low           # demoted — overcounts
+    unit_num: low
     single_default: medium     # a signal explicitly says "1"
     assumed_single: low        # pure item with no count wording -> assume 1
   default_single: 1

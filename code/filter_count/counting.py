@@ -71,6 +71,9 @@ class Counter:
         found: list[tuple[int, str]] = []
         for name, rx in self.patterns.items():
             for m in rx.finditer(text):
+                if name == "pack_mult":               # "2 Pack of 6" -> 2 x 6 = 12
+                    found.append((int(m.group("a")) * int(m.group("b")), "pack_mult"))
+                    continue
                 n = int(m.group("n"))
                 if name == "count_near_bomb":
                     unit = m.group("unit").lower()

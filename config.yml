@@ -116,7 +116,10 @@ counting:
     description: [product_description, keepa_description]
   patterns:
     set_of:          '\bset of\s+(?P<n>\d+)\b'
-    pack_of:         '\bpack of\s+(?P<n>\d+)\b'
+    pack_of:         '\bpack of\s+(?P<n>\d+)\b(?!\s*(?:oz|ounces?|g|grams?|ml|lbs?|fl|kg))'
+    # Multiplication: "N pack/set/box of M" -> N x M ("2 Pack of 6" = 12). The
+    # second number is guarded against weight units so "6 Pack of 2 oz" doesn't fire.
+    pack_mult:       '\b(?P<a>\d+)\s*(?:packs?|pk|sets?|boxes|box|packages?)\s+of\s+(?P<b>\d+)\b(?!\s*(?:oz|ounces?|g|grams?|ml|lbs?|fl|kg))'
     n_count:         '\b(?P<n>\d+)\s*count\b'
     case_pack:       '\bcase\s+(?:pack\s+)?(?:of\s+)?(?P<n>\d+)\b'   # "Case Pack 72", "Case of 24"
     x_bombs:         '\b(?P<n>\d+)\s*(?:x|×)\s*(?:\d+(?:\.\d+)?\s*(?:oz|ounce|oza|g|gram)s?\s+)?(?:bath\s+)?(?:bombs?|balls?|fizz)'
@@ -130,6 +133,7 @@ counting:
     # Bombs"). Weight/duration words are blocked so "5 oz Bath Bomb" stays single.
     n_bath_bomb:     '\b(?P<n>\d+)\s+(?:(?!(?:oz|ounces?|g|grams?|ml|lbs?|fl|mg|kg|inch|inches|cm|mm|hours?|hrs?|minutes?|mins?|years?|yrs?|days?|weeks?|scents?|flavou?rs?|fragrances?|colou?rs?|sizes?|styles?|variety|varieties)\b)[a-z][a-z&-]*\s+){0,2}(?:bath|shower)\s+(?:bombs?|balls?|bursts?|blasters?|fizz(?:y|ies|er|ers)?)\b'
   pattern_priority:
+    pack_mult: 0        # "2 Pack of 6" = 12 — most explicit, wins over its parts
     set_of: 0
     n_x_bombs: 1
     n_x_weight: 1       # "6 x 40g" — count x per-unit weight

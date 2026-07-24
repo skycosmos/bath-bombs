@@ -118,11 +118,23 @@ counting:
     set_of:          '\bset of\s+(?P<n>\d+)\b'
     pack_of:         '\bpack of\s+(?P<n>\d+)\b'
     n_count:         '\b(?P<n>\d+)\s*count\b'
+    case_pack:       '\bcase\s+(?:pack\s+)?(?:of\s+)?(?P<n>\d+)\b'   # "Case Pack 72", "Case of 24"
     x_bombs:         '\b(?P<n>\d+)\s*(?:x|×)\s*(?:\d+(?:\.\d+)?\s*(?:oz|ounce|oza|g|gram)s?\s+)?(?:bath\s+)?(?:bombs?|balls?|fizz)'
-    count_near_bomb: '(?P<n>\d+)\s*[-\s]?(?P<unit>pack|count|pcs|pieces|bombs?|balls?|fizz(?:y|ies|ers?)?|blasters?)'
+    # N x <weight>, no bomb noun required ("6 x 40g", "4 x 2.0 oz", "12 X 1.6oz").
+    x_weight:        '\b(?P<n>\d+)\s*(?:x|×)\s*\d+(?:\.\d+)?\s*(?:oz|ounce|oza|g|gram|ml)s?\b'
+    # count_near_bomb: N + unit, incl. singular "piece" and abbrevs pk/pc/ct
+    # (glued or spaced: "12pk", "12 pc", "12-ct").
+    count_near_bomb: '(?P<n>\d+)\s*[-\s]?(?P<unit>pack|count|pcs|pieces?|pk|pc|ct|bombs?|balls?|fizz(?:y|ies|ers?)?|blasters?)'
+    # "N [descriptors] bath/shower bomb(s)" — up to 2 adjective words between the
+    # number and "bath/shower" ("6 Luxury Bath Bombs", "12 Handmade Organic Bath
+    # Bombs"). Weight/duration words are blocked so "5 oz Bath Bomb" stays single.
+    n_bath_bomb:     '\b(?P<n>\d+)\s+(?:(?!(?:oz|ounces?|g|grams?|ml|lbs?|fl|mg|kg|inch|inches|cm|mm|hours?|hrs?|minutes?|mins?|years?|yrs?|days?|weeks?|scents?|flavou?rs?|fragrances?|colou?rs?|sizes?|styles?|variety|varieties)\b)[a-z][a-z&-]*\s+){0,2}(?:bath|shower)\s+(?:bombs?|balls?|bursts?|blasters?|fizz(?:y|ies|er|ers)?)\b'
   pattern_priority:
     set_of: 0
     n_x_bombs: 1
+    n_x_weight: 1       # "6 x 40g" — count x per-unit weight
+    word_paren: 1       # "Eight (8)" — spelled number confirmed by a digit
+    word_count: 2       # spelled number next to a bomb/pack/piece noun
     near_bombs: 2
     near_bomb: 2
     near_balls: 2
@@ -133,11 +145,30 @@ counting:
     near_blasters: 2
     near_blaster: 2
     pack_of: 3
+    case_pack: 3
     near_pack: 4
+    near_pk: 4
     near_count: 5
+    near_pc: 5
+    near_ct: 5
     near_pcs: 5
     near_pieces: 5
+    near_piece: 5
     n_count: 6
+  # Spelled-out numbers (word -> int) used by word_count / word_paren patterns.
+  number_words:
+    two: 2
+    three: 3
+    four: 4
+    five: 5
+    six: 6
+    seven: 7
+    eight: 8
+    nine: 9
+    ten: 10
+    eleven: 11
+    twelve: 12
+    dozen: 12
   # First signal that yields a value > 1 wins.
   resolution_order:
     - text                     # best count across the text channels (title>bullets>size>description)

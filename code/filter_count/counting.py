@@ -43,6 +43,19 @@ class Counter:
         self.conf: dict[str, str] = c["confidence"]
         self.default_single = int(c.get("default_single", 1))
 
+        # Spelled-out numbers ("six" -> 6). Two matchers: a word next to a
+        # bomb/pack/piece noun, and a word confirmed by a digit ("Eight (8)").
+        self.number_words = {str(k).lower(): int(v) for k, v in (c.get("number_words") or {}).items()}
+        self._word_unit_re = self._word_paren_re = None
+        if self.number_words:
+            alt = "|".join(re.escape(w) for w in sorted(self.number_words, key=len, reverse=True))
+            self._word_unit_re = re.compile(
+                rf"\b(?P<w>{alt})\s+(?:(?:bath|shower)\s+)?"
+                r"(?:pack|count|pcs|pieces?|bombs?|balls?|fizz(?:y|ies|ers?)?|blasters?)\b",
+                re.IGNORECASE,
+            )
+            self._word_paren_re = re.compile(rf"\b(?P<w>{alt})\s*\((?P<n>\d+)\)", re.IGNORECASE)
+
     # -- candidate extraction ------------------------------------------------ #
     def _parse(self, text: str) -> list[tuple[int, str]]:
         if not text or not isinstance(text, str):
@@ -61,8 +74,19 @@ class Counter:
                         found.append((n, "pack_of"))
                 elif name == "x_bombs":
                     found.append((n, "n_x_bombs"))
+                elif name == "x_weight":
+                    found.append((n, "n_x_weight"))
+                elif name == "n_bath_bomb":
+                    found.append((n, "near_bombs"))   # same strength as "N bombs"
                 else:  # set_of, n_count
                     found.append((n, name))
+
+        # Spelled-out numbers.
+        if self._word_unit_re is not None:
+            for m in self._word_unit_re.finditer(text):
+                found.append((self.number_words[m.group("w").lower()], "word_count"))
+            for m in self._word_paren_re.finditer(text):
+                found.append((int(m.group("n")), "word_paren"))
         return found
 
     def best_text_count(self, text: str) -> tuple[int | None, str | None]:

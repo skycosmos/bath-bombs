@@ -22,6 +22,17 @@ _SRC_COL = {
 _TEXT = ("title", "bullets", "size", "description")
 _CATALOG = ("number_of_items", "keepa_number_of_items", "keepa_package_quantity", "unit_num")
 
+# Confidence ladder — agreement-aware adjustment steps up/down this list.
+_CONF_LEVELS = ("low", "medium", "high")
+
+
+def _step_conf(level: str, delta: int) -> str:
+    try:
+        i = _CONF_LEVELS.index(level)
+    except ValueError:
+        return level
+    return _CONF_LEVELS[max(0, min(len(_CONF_LEVELS) - 1, i + delta))]
+
 
 def _to_int(value: Any) -> int | None:
     if value is None or (isinstance(value, float) and pd.isna(value)):
@@ -179,7 +190,27 @@ class Counter:
         dominant = (not others) or tally[winner] >= 2 * max(others)
         needs_review = conflict and not dominant and self.conflict_needs_review
         src = best[winner][1]
-        conf = "low" if needs_review else self.conf.get(f"text_{src}" if src in _TEXT else src, "medium")
+
+        # Confidence starts from the winning source's reliability, then adjusts
+        # for corroboration: >=2 independent sources on the winning value boost
+        # it a level; a lone weight-1 source demotes it. An unresolved conflict
+        # (needs_review) always lands at low.
+        base_conf = self.conf.get(f"text_{src}" if src in _TEXT else src, "medium")
+        if needs_review:
+            conf = "low"
+        else:
+            backers = [s for s, v in multi if v == winner]    # sources on the winning value
+            text_backed = any(s in _TEXT for s in backers)
+            if len(backers) >= 2:                             # corroborated -> boost
+                conf = _step_conf(base_conf, +1)
+            elif best[winner][0] <= 1:                        # lone weight-1 source -> demote
+                conf = _step_conf(base_conf, -1)
+            else:
+                conf = base_conf
+            # Catalog fields share the package-count ("Pack of 1") bias, so their
+            # mutual agreement is not independent -> it cannot reach "high".
+            if conf == "high" and not text_backed:
+                conf = "medium"
         return self._done(winner, src, conf, base, conflict=conflict, needs_review=needs_review)
 
     def _done(self, n, source, conf, base, *, conflict, needs_review) -> dict[str, Any]:

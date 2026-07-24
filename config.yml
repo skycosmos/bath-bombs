@@ -192,6 +192,11 @@ counting:
   conflict_needs_review: true
   # Reject implausible counts (barcodes, model numbers, mis-parsed IDs).
   max_count: 1000
+  # Base confidence per winning source. It is then AGREEMENT-AWARE: >=2 sources
+  # on the winning value step it up a level (low->medium->high); a lone weight-1
+  # source steps it down; an unresolved conflict (needs_review) forces low.
+  # Catalog fields share the "Pack of 1" bias, so catalog-only agreement (no text
+  # channel on the winner) is capped at medium — "high" requires a text source.
   confidence:
     text_title: high
     text_bullets: high

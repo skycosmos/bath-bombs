@@ -78,6 +78,13 @@ value wins. A candidate of **1 never votes**, so a catalog "Pack of 1" can never
 override a real text N. A sanity cap (`max_count`) drops barcodes / model numbers;
 no evidence → assume a single unit (flagged for review).
 
+`count_confidence` is **agreement-aware**: it starts from the winning source's
+reliability (`counting.confidence`), then steps **up** a level when ≥2 sources
+corroborate the winning value and **down** for a lone low-weight source. Because
+the catalog fields share the "Pack of 1" overcount bias, catalog-only agreement
+is capped at `medium` — reaching `high` requires a text channel on the winner.
+An unresolved conflict forces `low`.
+
 Outputs `n_bomb_balls`, `count_source`, `count_confidence`, and two flags:
 `count_conflict` (≥2 distinct values > 1) and `needs_review` (an unresolved
 conflict, or a no-evidence single) — plus `seller_counts_pack_as_one`.
@@ -155,4 +162,4 @@ bundle 4,503 · substitute 1,078 · craft_kit 314 · ingredients 21). Keepa matc
 
 Counting flags `count_conflict` on 852 pure rows (8%) and `needs_review` on 4,242
 (40% — no-evidence singles + unresolved conflicts). Against a 300-image vision
-check, exact-match is **72.7%** overall and **86.3%** on high-confidence rows.
+check, exact-match is **72.7%** overall and **86.9%** on high-confidence rows.

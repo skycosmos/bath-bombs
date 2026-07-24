@@ -78,12 +78,19 @@ value wins. A candidate of **1 never votes**, so a catalog "Pack of 1" can never
 override a real text N. A sanity cap (`max_count`) drops barcodes / model numbers;
 no evidence → assume a single unit (flagged for review).
 
-`count_confidence` is **agreement-aware**: it starts from the winning source's
-reliability (`counting.confidence`), then steps **up** a level when ≥2 sources
-corroborate the winning value and **down** for a lone low-weight source. Because
-the catalog fields share the "Pack of 1" overcount bias, catalog-only agreement
-is capped at `medium` — reaching `high` requires a text channel on the winner.
-An unresolved conflict forces `low`.
+**Confidence (`count_confidence`)** is **agreement-aware**, not a fixed per-source
+tag. It begins at the winning source's base reliability (`counting.confidence`:
+title/bullets `high`, size/description/`number_of_items`/Keepa `numberOfItems`
+`medium`, the overcounting `keepa_package_quantity`/`label_unit_num`/`unit_num`
+`low`), then adjusts on the `low → medium → high` ladder:
+
+| situation | effect |
+|---|---|
+| ≥2 sources report the winning value | **+1 level** (corroborated) |
+| the winner comes from a lone weight-1 source | **−1 level** |
+| agreement is **catalog-only** (no text channel on the winner) | capped at `medium` — catalog fields share the "Pack of 1" overcount bias, so their mutual agreement isn't independent; `high` requires a text channel |
+| unresolved conflict (`needs_review`) | forced to `low` |
+| explicit "1" with no multi-count / no evidence at all | `single_default` (medium) / `assumed_single` (low) |
 
 Outputs `n_bomb_balls`, `count_source`, `count_confidence`, and two flags:
 `count_conflict` (≥2 distinct values > 1) and `needs_review` (an unresolved
@@ -160,6 +167,6 @@ output/
 bundle 4,503 · substitute 1,078 · craft_kit 314 · ingredients 21). Keepa matched
 100% of ASINs.
 
-Counting flags `count_conflict` on 852 pure rows (8%) and `needs_review` on 4,242
-(40% — no-evidence singles + unresolved conflicts). Against a 300-image vision
-check, exact-match is **72.7%** overall and **86.9%** on high-confidence rows.
+Of the 10,637 pure rows, counting resolves **43% high** / 15% medium / 43% low
+confidence. It flags `count_conflict` on 852 (8%) and `needs_review` on 4,242
+(40% — no-evidence singles + unresolved conflicts) for the review queue.

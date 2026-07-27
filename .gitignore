@@ -1,8 +1,13 @@
 # Generated pipeline outputs are regenerable and gitignored; the manual labels
-# (human-produced ground truth) and dir markers are kept.
-output/**/*.csv
-output/**/*.json
-!output/label_check/manual_labels.csv
+# (human-produced ground truth) and dir markers (.gitkeep) are kept.
+temp/*.parquet
+temp/*.csv
+temp/*.json
+output/*.parquet
+output/*.csv
+output/*.json
+review/labeling_sample.csv
+!review/manual_labels.csv
 __pycache__/
 *.pyc
 .DS_Store

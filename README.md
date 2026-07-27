@@ -18,10 +18,10 @@ python3 -m venv .venv
 
 ```bash
 # 1-3) Read + consolidate data → purify → count.
-#      Writes output/filter_count/parsed.csv (inputs) + results.csv (generated columns)
+#      Writes temp/parsed.parquet (inputs) + output/results.parquet (generated columns)
 .venv/bin/python code/filter_count/run_pipeline.py --labeling-sample
 
-# 4) Manual review / label UI (writes output/label_check/manual_labels.csv)
+# 4) Manual review / label UI (writes review/manual_labels.csv)
 .venv/bin/streamlit run code/label_check/label_ui.py
 ```
 
@@ -102,20 +102,22 @@ Streamlit console to check/correct predictions: product image, evidence and
 candidate-count panels, optional scraped-page render, and a label form. A
 **"Review queue" filter** lets you label only the rows counting flagged
 `needs_review` (or `count_conflict`). Labels save to
-`output/label_check/manual_labels.csv` (one row per ASIN, latest wins). A
+`review/manual_labels.csv` (one row per ASIN, latest wins). A
 stratified `labeling_sample.csv` (`--labeling-sample`) seeds the queue.
 
 ## Output — two files, joined on `asin`
 
 The pipeline writes its columns split by origin:
 
-- **`parsed.csv`** — the *parsed inputs* only: every raw column loaded from the
+- **`temp/parsed.parquet`** — the *parsed inputs* only: every raw column loaded from the
   Amazon scrape + Keepa (`title`, `size`, `feature`, `keepa_*`, …). Nothing
   generated here.
-- **`results.csv`** — the *newly generated* columns only (the tables below): the
+- **`output/results.parquet`** — the *newly generated* columns only (the tables below): the
   purity verdict, the candidate counts (`cand_*`), and the resolved count.
 
-Both keyed on `asin` (join to recombine). **Purification** (pipeline 2) sets:
+Both are **Parquet** (dtypes preserved — real bool/int, no CSV string round-trip),
+keyed on `asin` to recombine. The review files (`review/*.csv`) stay CSV so they
+stay human-readable and git-diffable. **Purification** (pipeline 2) sets:
 
 | column | meaning |
 |---|---|
@@ -152,8 +154,8 @@ pattern that produced it.
 
 ## Layout
 
-Both `code/` and `output/` split into the same two areas — **`filter_count`**
-(the automated pipeline) and **`label_check`** (manual review):
+`code/` splits into **`filter_count`** (the automated pipeline) and
+**`label_check`** (manual review); results are split by role into three folders:
 
 ```
 config.yml                              # single source of truth
@@ -162,13 +164,13 @@ code/
     config.py  data.py  purity.py  counting.py  pipeline.py  run_pipeline.py
   label_check/                          # manual: label + check
     labeling.py  label_ui.py
+temp/
+  parsed.parquet                        # parsed inputs (raw Amazon + Keepa) — regenerable
 output/
-  filter_count/
-    parsed.csv                          # parsed inputs (raw Amazon + Keepa)
-    results.csv                         # ← FINAL machine output (generated columns)
-    labeling_sample.csv                 # review queue for the UI
-  label_check/
-    manual_labels.csv                   # ← FINAL manual output (human labels)
+  results.parquet                       # ← FINAL machine output (generated columns)
+review/
+  labeling_sample.csv                   # stratified review queue for the UI
+  manual_labels.csv                     # ← FINAL manual output (human labels, tracked)
 ```
 
 ## Results (current run)

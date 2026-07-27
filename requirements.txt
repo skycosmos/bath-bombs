@@ -1,5 +1,6 @@
 pandas>=2.0
 numpy>=1.24
+pyarrow>=14        # Parquet engine for temp/parsed.parquet + output/results.parquet
 beautifulsoup4>=4.12
 lxml>=4.9
 pyyaml>=6.0

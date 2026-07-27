@@ -57,6 +57,17 @@ def _read(path: Path) -> pd.DataFrame | None:
     return _read_csv(str(path), path.stat().st_mtime)
 
 
+@st.cache_data(show_spinner=False)
+def _read_parquet_cached(path_str: str, mtime: float) -> pd.DataFrame:
+    return pd.read_parquet(path_str)
+
+
+def _read_parquet(path: Path) -> pd.DataFrame | None:
+    if not path.exists() or path.stat().st_size == 0:
+        return None
+    return _read_parquet_cached(str(path), path.stat().st_mtime)
+
+
 def _ensure_labels(df: pd.DataFrame) -> pd.DataFrame:
     """Guarantee class_label / count_label columns for filtering + badges."""
     if "class_label" not in df.columns and "is_pure_bath_bomb" in df.columns:
@@ -67,9 +78,9 @@ def _ensure_labels(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _read_full(cfg: dict) -> pd.DataFrame | None:
-    """Combined parsed inputs + processed results, joined on `asin`."""
-    parsed = _read(Path(cfg["paths"]["parsed_csv"]))
-    results = _read(Path(cfg["paths"]["results_csv"]))
+    """Combined parsed inputs + processed results (parquet), joined on `asin`."""
+    parsed = _read_parquet(Path(cfg["paths"]["parsed_parquet"]))
+    results = _read_parquet(Path(cfg["paths"]["results_parquet"]))
     if parsed is None:
         return results
     if results is None:
@@ -489,9 +500,9 @@ def _text_panel(row: pd.Series) -> None:
 # --------------------------------------------------------------------------- #
 # Review tab
 # --------------------------------------------------------------------------- #
-def _truthy(s: pd.Series) -> pd.Series:
-    """Coerce a bool-ish column (True/False/1/0, possibly read as strings) to bool."""
-    return s.astype(str).str.strip().str.lower().isin(["true", "1", "1.0"])
+def _bool_col(queue: pd.DataFrame, col: str) -> pd.Series:
+    """A bool mask for a flag column (parquet keeps these as real bool)."""
+    return queue[col].fillna(False).astype(bool)
 
 
 def _apply_filters(queue: pd.DataFrame, labeled_asins: set) -> pd.DataFrame:
@@ -499,8 +510,8 @@ def _apply_filters(queue: pd.DataFrame, labeled_asins: set) -> pd.DataFrame:
     hide_labeled = st.sidebar.checkbox("Hide already-labeled ASINs", value=True)
 
     st.sidebar.markdown("**Review queue**")
-    n_review = int(_truthy(queue["needs_review"]).sum()) if "needs_review" in queue else 0
-    n_conf = int(_truthy(queue["count_conflict"]).sum()) if "count_conflict" in queue else 0
+    n_review = int(_bool_col(queue, "needs_review").sum()) if "needs_review" in queue else 0
+    n_conf = int(_bool_col(queue, "count_conflict").sum()) if "count_conflict" in queue else 0
     only_review = st.sidebar.checkbox(
         f"Only rows needing review ({n_review})",
         value=False,
@@ -541,9 +552,9 @@ def _apply_filters(queue: pd.DataFrame, labeled_asins: set) -> pd.DataFrame:
     if hide_labeled:
         work = work[~work["asin"].isin(labeled_asins)]
     if only_review and "needs_review" in work.columns:
-        work = work[_truthy(work["needs_review"])]
+        work = work[_bool_col(work, "needs_review")]
     if only_conflict and "count_conflict" in work.columns:
-        work = work[_truthy(work["count_conflict"])]
+        work = work[_bool_col(work, "count_conflict")]
     if pick_class and "class_label" in work.columns:
         work = work[work["class_label"].isin(pick_class)]
     if pick_count and "count_label" in work.columns:
@@ -622,9 +633,9 @@ def _review_tab(
             badges.append(f"class: **{row.get('class_label')}**")
         if _clean(row.get("count_label")) and row.get("count_label") != "n/a":
             badges.append(f"count: **{row.get('count_label')}**")
-        if str(_clean(row.get("needs_review"))).lower() in ("true", "1", "1.0"):
+        if bool(_clean(row.get("needs_review"))):
             badges.append("🔎 **needs review**")
-        if str(_clean(row.get("count_conflict"))).lower() in ("true", "1", "1.0"):
+        if bool(_clean(row.get("count_conflict"))):
             badges.append("⚠️ **count conflict**")
         st.markdown(" · ".join(badges))
         _label_status(labels, asin)

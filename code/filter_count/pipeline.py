@@ -40,13 +40,14 @@ def run_pipeline(config_path=None, *, write_labeling_sample: bool = False) -> pd
     processed_cols = [c for c in df.columns if c not in parsed_cols]
 
     # Split output: parsed inputs vs processed results (both keyed on `asin`).
-    parsed_path = Path(cfg["paths"]["parsed_csv"])
+    # Parquet preserves dtypes (bool / nullable-int) — no CSV string round-trip.
+    parsed_path = Path(cfg["paths"]["parsed_parquet"])
     parsed_path.parent.mkdir(parents=True, exist_ok=True)
-    df[parsed_cols].to_csv(parsed_path, index=False)
+    df[parsed_cols].to_parquet(parsed_path, index=False)
 
-    results_path = Path(cfg["paths"]["results_csv"])
+    results_path = Path(cfg["paths"]["results_parquet"])
     results_path.parent.mkdir(parents=True, exist_ok=True)
-    df[["asin"] + processed_cols].to_csv(results_path, index=False)
+    df[["asin"] + processed_cols].to_parquet(results_path, index=False)
 
     if write_labeling_sample:
         sample = build_labeling_sample(

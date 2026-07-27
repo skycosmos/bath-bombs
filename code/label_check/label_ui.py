@@ -66,30 +66,37 @@ def _ensure_labels(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _read_full(cfg: dict) -> pd.DataFrame | None:
+    """Combined parsed inputs + processed results, joined on `asin`."""
+    parsed = _read(Path(cfg["paths"]["parsed_csv"]))
+    results = _read(Path(cfg["paths"]["results_csv"]))
+    if parsed is None:
+        return results
+    if results is None:
+        return parsed
+    proc = [c for c in results.columns if c != "asin"]
+    return parsed.merge(results[["asin"] + proc], on="asin", how="left")
+
+
 def _load_queue(cfg: dict) -> tuple[pd.DataFrame, str]:
     sample_path = Path(cfg["paths"]["labeling_sample_csv"])
-    pred_path = Path(cfg["paths"]["output_csv"])
+    full = _read_full(cfg)
 
     source = st.sidebar.selectbox(
         "Queue source",
-        ["labeling_sample", "product_counts"],
-        help="labeling_sample = stratified review sheet · product_counts = full predictions",
+        ["labeling_sample", "results"],
+        help="labeling_sample = stratified review sheet · results = full predictions",
     )
-    path = {
-        "labeling_sample": sample_path,
-        "product_counts": pred_path,
-    }[source]
-    queue = _read(path)
+    queue = _read(sample_path) if source == "labeling_sample" else full
     if queue is None:
         st.error(
-            f"Missing or empty: `{path}`.\n\n"
-            "Run: `python scripts/run_pipeline.py --labeling-sample`"
+            "Missing or empty output.\n\n"
+            "Run: `python code/filter_count/run_pipeline.py --labeling-sample`"
         )
         st.stop()
 
-    # Enrich thin queues (e.g. labeling_sample) with the full evidence columns.
-    full = _read(pred_path)
-    if full is not None and "asin" in full.columns:
+    # Enrich a thin queue (labeling_sample) with the full evidence columns.
+    if source == "labeling_sample" and full is not None and "asin" in full.columns:
         extra = [c for c in full.columns if c not in queue.columns]
         if extra:
             queue = queue.merge(full[["asin"] + extra], on="asin", how="left")
@@ -777,7 +784,7 @@ def _dashboard_tab(cfg: dict, labels: pd.DataFrame, queue: pd.DataFrame) -> None
 
     # --- Manual labels vs the rules ---
     st.markdown("### 🎯 Manual labels vs rule prediction")
-    full = _read(Path(cfg["paths"]["output_csv"]))
+    full = _read_full(cfg)
     if full is not None:
         m = labels.merge(full[["asin", "is_pure_bath_bomb", "n_bomb_balls"]], on="asin", how="inner")
         n_p, pa, n_c, ce = _agreement(m)

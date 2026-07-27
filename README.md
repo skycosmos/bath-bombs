@@ -17,7 +17,8 @@ python3 -m venv .venv
 ## Pipelines
 
 ```bash
-# 1-3) Read + consolidate data → purify → count. Writes output/filter_count/product_counts.csv
+# 1-3) Read + consolidate data → purify → count.
+#      Writes output/filter_count/parsed.csv (inputs) + results.csv (generated columns)
 .venv/bin/python code/filter_count/run_pipeline.py --labeling-sample
 
 # 4) Manual review / label UI (writes output/label_check/manual_labels.csv)
@@ -104,9 +105,17 @@ candidate-count panels, optional scraped-page render, and a label form. A
 `output/label_check/manual_labels.csv` (one row per ASIN, latest wins). A
 stratified `labeling_sample.csv` (`--labeling-sample`) seeds the queue.
 
-## Output columns (`product_counts.csv`)
+## Output — two files, joined on `asin`
 
-One row per listing. **Purification** (pipeline 2) sets:
+The pipeline writes its columns split by origin:
+
+- **`parsed.csv`** — the *parsed inputs* only: every raw column loaded from the
+  Amazon scrape + Keepa (`title`, `size`, `feature`, `keepa_*`, …). Nothing
+  generated here.
+- **`results.csv`** — the *newly generated* columns only (the tables below): the
+  purity verdict, the candidate counts (`cand_*`), and the resolved count.
+
+Both keyed on `asin` (join to recombine). **Purification** (pipeline 2) sets:
 
 | column | meaning |
 |---|---|
@@ -155,7 +164,8 @@ code/
     labeling.py  label_ui.py
 output/
   filter_count/
-    product_counts.csv                  # ← FINAL machine output (predictions)
+    parsed.csv                          # parsed inputs (raw Amazon + Keepa)
+    results.csv                         # ← FINAL machine output (generated columns)
     labeling_sample.csv                 # review queue for the UI
   label_check/
     manual_labels.csv                   # ← FINAL manual output (human labels)

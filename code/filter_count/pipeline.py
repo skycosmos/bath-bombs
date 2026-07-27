@@ -35,11 +35,18 @@ def run_pipeline(config_path=None, *, write_labeling_sample: bool = False) -> pd
     cfg = load_config(config_path)
 
     df = load_data(cfg)                         # 1) read + consolidate
+    parsed_cols = list(df.columns)              # everything the loader produced
     df = classify_and_count(df, cfg)            # 2) purify + 3) count
+    processed_cols = [c for c in df.columns if c not in parsed_cols]
 
-    out_path = Path(cfg["paths"]["output_csv"])
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(out_path, index=False)
+    # Split output: parsed inputs vs processed results (both keyed on `asin`).
+    parsed_path = Path(cfg["paths"]["parsed_csv"])
+    parsed_path.parent.mkdir(parents=True, exist_ok=True)
+    df[parsed_cols].to_csv(parsed_path, index=False)
+
+    results_path = Path(cfg["paths"]["results_csv"])
+    results_path.parent.mkdir(parents=True, exist_ok=True)
+    df[["asin"] + processed_cols].to_csv(results_path, index=False)
 
     if write_labeling_sample:
         sample = build_labeling_sample(
@@ -53,7 +60,7 @@ def run_pipeline(config_path=None, *, write_labeling_sample: bool = False) -> pd
         print(f"Wrote labeling sample: {len(sample):,} rows -> {sample_path}")
 
     pure = int((df["is_pure_bath_bomb"] == True).sum())  # noqa: E712
-    print(f"Wrote {len(df):,} rows -> {out_path}")
+    print(f"Wrote {len(df):,} rows -> {parsed_path} (parsed) + {results_path} (results)")
     print(f"Pure bath bombs: {pure:,} | excluded: {len(df) - pure:,}")
     print("Exclude reasons:", df.loc[df["is_pure_bath_bomb"] != True, "exclude_reason"]  # noqa: E712
           .value_counts().to_dict())

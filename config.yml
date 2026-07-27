@@ -12,7 +12,8 @@ paths:
   amazon_dir: "/Users/tzheng/Library/CloudStorage/Dropbox-HarvardUniversity/Tianyu Zheng/ASIN_number_of_units/amazon_web_scraping/asin_level/csv/bath_bombs_all"
   keepa_dir:  "/Users/tzheng/Library/CloudStorage/Dropbox-HarvardUniversity/Tianyu Zheng/ASIN_number_of_units/keepa_data/bath_bombs_all/product/static"
   html_dir:   "/Users/tzheng/Library/CloudStorage/Dropbox-HarvardUniversity/Tianyu Zheng/ASIN_number_of_units/amazon_web_scraping/asin_level/html/bath_bombs_all/bath_bombs_all"
-  output_csv:          output/filter_count/product_counts.csv
+  parsed_csv:          output/filter_count/parsed.csv
+  results_csv:         output/filter_count/results.csv
   labeling_sample_csv: output/filter_count/labeling_sample.csv
   manual_labels_csv:   output/label_check/manual_labels.csv
 

@@ -143,7 +143,7 @@ pattern that produced it.
 
 | Section | Controls |
 |---------|----------|
-| `paths` | Amazon / Keepa / HTML folders, output + label CSVs |
+| `paths` | Amazon / Keepa / HTML source folders; `parsed_parquet` + `results_parquet` outputs; review CSVs (`labeling_sample`, `manual_labels`) |
 | `amazon_columns`, `keepa` | Which source columns to keep / join |
 | `purity.lexicon` | Every word set per exclusion class |
 | `counting.patterns` / `pattern_priority` | Count regexes + tie-break priority |
@@ -159,19 +159,24 @@ pattern that produced it.
 
 ```
 config.yml                              # single source of truth
+requirements.txt                        # deps (pandas, pyarrow, streamlit, …)
+README.md
 code/
   filter_count/                         # machine: read → filter/purify → count
     config.py  data.py  purity.py  counting.py  pipeline.py  run_pipeline.py
   label_check/                          # manual: label + check
     labeling.py  label_ui.py
 temp/
-  parsed.parquet                        # parsed inputs (raw Amazon + Keepa) — regenerable
+  parsed.parquet                        # parsed inputs (raw Amazon + Keepa) — regenerable · gitignored
 output/
-  results.parquet                       # ← FINAL machine output (generated columns)
+  results.parquet                       # ← FINAL machine output (generated columns) · gitignored
 review/
-  labeling_sample.csv                   # stratified review queue for the UI
-  manual_labels.csv                     # ← FINAL manual output (human labels, tracked)
+  labeling_sample.csv                   # stratified review queue for the UI · gitignored
+  manual_labels.csv                     # ← FINAL manual output (human labels) · tracked in git
 ```
+
+`temp/` and `output/` also keep a `.gitkeep` so the (otherwise-ignored) folders
+survive a clone.
 
 ## Results (current run)
 
